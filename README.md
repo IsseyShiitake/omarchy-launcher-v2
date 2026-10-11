@@ -1,10 +1,16 @@
-# Omarchy Launcher — KRunner Parity Pack
+# Omarchy Launcher, improved
 
-Turns the [Omarchy](https://omarchy.org) launcher (the Quickshell `omarchy.menu`
-plugin, Super+Space) into a KRunner-grade do-everything bar: math, unit
-conversion, dates, file and folder search, full-text search, window switching,
-recent documents, and learning rankings — all in the same minimal menu, with
-zero new daemons.
+More functions, more practicality, more power. Implemented the following:
+- websearching
+- finds files & folders
+- right click to copy path to clipboard
+- calculations
+- unit conversion
+- full-text search
+- window swiching
+- recent documents with learning rankings
+
+All in the same minimal menu, with zero new daemons.
 
 ![calculator answer coexisting with file results](screenshots/calculate.png)
 ![file and folder search](screenshots/files-folders.png)
