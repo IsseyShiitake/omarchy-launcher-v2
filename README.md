@@ -7,16 +7,20 @@ More functions, more practicality, more power. Implemented the following:
 - calculations
 - unit conversion
 - full-text search
-- window swiching
+- window switching
 - recent documents with learning rankings
 
 All in the same minimal menu, with zero new daemons.
 
-![calculator answer coexisting with file results](screenshots/calculate.png)
-![file and folder search](screenshots/files-folders.png)
+<p align="center">
+  <img src="screenshots/calculate.png" alt="calculator answer coexisting with file results" width="49%">
+  <img src="screenshots/files-folders.png" alt="file and folder search" width="49%">
+</p>
 
-![unit conversion](screenshots/distance.png)
-![date answer](screenshots/time.png)
+<p align="center">
+  <img src="screenshots/distance.png" alt="unit conversion" width="49%">
+  <img src="screenshots/time.png" alt="date answer" width="49%">
+</p>
 
 ## What you get
 
