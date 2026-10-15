@@ -2,7 +2,7 @@
 # Focus a Hyprland window by address. Wave-7 lua dispatch only: legacy
 # focuswindow text parse-errors, and a missing window returns rc=0 with a
 # warning — so match the "ok" string, never exit codes.
-addr="$1"; [[ $addr == 0x* ]] || exit 1
+addr="$1"; [[ $addr =~ ^0x[0-9a-fA-F]+$ ]] || exit 1
 out=$(/usr/bin/hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" 2>&1)
 [[ $out == "ok" ]] && exit 0
 echo "ravi-window-focus: dispatch failed: $out" >&2

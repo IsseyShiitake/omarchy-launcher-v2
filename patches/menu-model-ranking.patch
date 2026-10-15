@@ -1,5 +1,5 @@
 diff --git a/shell/plugins/menu/MenuModel.js b/shell/plugins/menu/MenuModel.js
-index 53a49c68..cd6ec8d9 100644
+index 53c49768..cd6ec8d9 100644
 --- a/shell/plugins/menu/MenuModel.js
 +++ b/shell/plugins/menu/MenuModel.js
 @@ -354,7 +354,10 @@ function searchScore(items, entry, query) {
