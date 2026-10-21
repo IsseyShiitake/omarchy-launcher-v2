@@ -12,7 +12,7 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: omarchy-launcher-v2
 
@@ -26,7 +26,7 @@ jobs:
           git clone --quiet https://github.com/omacom/omarchy.git "$GITHUB_WORKSPACE/omarchy"
           git -C "$GITHUB_WORKSPACE/omarchy" checkout --quiet 821ae589059ffdadc970315f866c94b55d268af7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
