@@ -2,7 +2,11 @@
 # Launcher v2: enhanced menu for the Omarchy shell (Hyprland + Quickshell).
 # Installs the enhanced menu files into an existing Omarchy shell checkout.
 # Everything it overwrites is backed up first; run uninstall.sh to revert.
-set -euo pipefail
+#
+# A failure part way through is rolled back from that backup, so the tree is
+# never left half-upgraded: the menu and its overlay are a pair, and only one
+# of them replaced is a launcher whose close-fade never plays.
+set -Eeuo pipefail
 
 OMARCHY="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
 MIRROR="$HOME/.config/quickshell/omarchy"
@@ -50,13 +54,14 @@ fi
 # made directly in the live tree must not be discarded unbacked.
 PACK_STATE=1
 cmp -s "$OMARCHY/shell/plugins/menu/Menu.qml" "$HERE/files/Menu.qml" || PACK_STATE=0
+cmp -s "$OMARCHY/shell/plugins/menu/MenuModel.js" "$HERE/files/MenuModel.js" || PACK_STATE=0
 cmp -s "$OMARCHY/shell/Ui/OverlayWindow.qml" "$HERE/files/OverlayWindow.qml" || PACK_STATE=0
 if [[ -d "$MIRROR/plugins/menu" ]]; then
   cmp -s "$MIRROR/plugins/menu/Menu.qml" "$HERE/files/Menu.qml" || PACK_STATE=0
   cmp -s "$MIRROR/Ui/OverlayWindow.qml" "$HERE/files/OverlayWindow.qml" 2>/dev/null || PACK_STATE=0
-  # MenuModel.js has no pristine copy in this repo (it ships as a patch), so
-  # "fresh" means mirror == checkout: install keeps them synced, so an
-  # inequality is a hand edit one step ahead of being overwritten unbacked.
+  # MenuModel.js is compared mirror-to-CHECKOUT here, not mirror-to-pack: install
+  # keeps those two synced, so an inequality is a hand edit one step ahead of
+  # being overwritten unbacked. The checkout was compared with the pack above.
   cmp -s "$MIRROR/plugins/menu/MenuModel.js" "$OMARCHY/shell/plugins/menu/MenuModel.js" || PACK_STATE=0
 fi
 # Same for the focus helper: differing from the pack means somebody's own
@@ -123,29 +128,52 @@ else
 fi
 
 say "==> Installing files"
+
+# Roll back from the snapshot if anything below fails. Without this a
+# failure part way through left the tree half-upgraded: the menu replaced but
+# not its overlay, which is a launcher whose close-fade never plays, and
+# nothing in the output said a backup existed.
+ROLLBACK=""
+rollback() {
+  local rc=$?
+  trap - ERR
+  if [[ -n "$ROLLBACK" && -d "$ROLLBACK" ]]; then
+    say "    ERROR: the install failed — restoring the backed-up files"
+    local f restored=0
+    for f in shell/plugins/menu/Menu.qml shell/plugins/menu/MenuModel.js shell/Ui/OverlayWindow.qml; do
+      # Only the files the snapshot actually holds can be put back. A file that
+      # did not exist before the install cannot be restored to "absent", so the
+      # count is reported instead of promising a perfect revert.
+      if [[ -f "$ROLLBACK/$f" ]]; then
+        if cp "$ROLLBACK/$f" "$OMARCHY/$f" 2>/dev/null; then
+          restored=$((restored + 1))
+        else
+          say "    WARNING: could not restore $f"
+        fi
+      fi
+    done
+    say "    $restored file(s) restored from $ROLLBACK."
+    say "    Re-run install.sh once the cause is fixed."
+  else
+    say "    ERROR: the install failed before a usable snapshot existed."
+    say "    Either the tree was already at this pack revision (nothing to back up),"
+    say "    or the backup step itself failed. Backups live under"
+    say "    $HOME/.local/share/omarchy-backups/launcher-v2/"
+  fi
+  exit $rc
+}
+trap rollback ERR
+ROLLBACK="$BACKUPS"
+
 install -Dm644 "$HERE/files/Menu.qml"         "$OMARCHY/shell/plugins/menu/Menu.qml"
+install -Dm644 "$HERE/files/MenuModel.js"     "$OMARCHY/shell/plugins/menu/MenuModel.js"
 install -Dm644 "$HERE/files/OverlayWindow.qml" "$OMARCHY/shell/Ui/OverlayWindow.qml"
 install -Dm755 "$HERE/files/ravi-window-focus" "$HOME/.local/bin/ravi-window-focus"
 
-say "==> Applying optional menu-ranking patch (MenuModel.js)"
-PATCH="$HERE/patches/menu-model-ranking.patch"
-if [[ ! -f "$PATCH" ]]; then
-  say "    SKIPPED — patches/menu-model-ranking.patch is missing from this checkout."
-  say "    Re-clone the repository to get it; only result ranking is affected."
-elif git -C "$OMARCHY" apply --check "$PATCH" 2>/dev/null; then
-  git -C "$OMARCHY" apply "$PATCH"
-  say "    applied"
-elif git -C "$OMARCHY" apply --check -R "$PATCH" 2>/dev/null; then
-  say "    already applied (nothing to do)"
-elif patch --forward -p1 -d "$OMARCHY" --dry-run -s -i "$PATCH" >/dev/null 2>&1; then
-  patch --forward -p1 -d "$OMARCHY" -s -i "$PATCH"
-  say "    applied"
-elif patch -R -p1 -d "$OMARCHY" --dry-run -s -i "$PATCH" >/dev/null 2>&1; then
-  say "    already applied (nothing to do)"
-else
-  say "    SKIPPED (your MenuModel.js differs from the expected base)."
-  say "    This only affects result ranking (actions before submenus); everything else works."
-fi
+# The files are in place. Anything that fails from here is a mirror or a
+# shell-restart problem, not a half-installed tree, so the rollback is over.
+ROLLBACK=""
+trap - ERR
 
 if [[ -d "$MIRROR/plugins/menu" ]]; then
   say "==> Syncing the live quickshell config at $MIRROR (qs -c omarchy loads this one)"

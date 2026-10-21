@@ -39,7 +39,7 @@ Type in the launcher (≥ 2 characters, or any `=`-expression):
 | `#ff0000`, `#0f0`, `#ff000080` | A colour answer row with a swatch painted from the colour itself: `rgb(255,0,0) · hsl(0,100%,50%)`, or `rgba(255,0,0,0.5) · hsl(…)` when the query carried an alpha channel — Enter copies the hex and shows a "Color copied!" pill |
 | `date`, `time`, `now`, `today` (+ `heure`) | Current date/time, kept ticking second-by-second while it is shown — Enter copies what is on screen |
 | any file/folder name | Matching **folders and files from `$HOME` in two blocks** (fd-powered, ~50 ms; hidden and gitignored paths skipped) — Enter opens (a folder in your file manager, a file in that type's default app), **Right/Tab on a folder browses into it**, **Ctrl+Enter reveals the containing folder**, **right-click or Ctrl+C copies the path** |
-| words that appear inside files | A second tier of Baloo full-text hits, in their own block after the files, each marked `content · …` |
+| words that appear inside files | A second tier of Baloo hits (name *or* contents), in their own block after the files, each marked `content · …` |
 | a word from an open window's title or app id | Open-window switcher rows — Enter focuses that window |
 | anything | A "Search the web for …" fallback row (DuckDuckGo) |
 
@@ -61,10 +61,9 @@ Every search reads top to bottom as one story, with a hairline wherever the
 3. **Open windows** — title, then `class · workspace N`; Enter focuses it.
 4. **Folders** — up to five, then `More folders…` when there were more.
 5. **Files** — up to five, then `More files…` when there were more.
-6. **File contents** — Baloo full-text hits, in a block of their own behind a
+6. **File contents** — Baloo hits, in a block of their own behind a
    hairline, each marked `content · ~/where/it/lives`. They are a different kind
-   of match (the query was found *inside* the file, not in its name), so they
-   are never mixed into the file block: three rows that look exactly like files
+   of match, so they are never mixed into the file block: three rows that look exactly like files
    and appear after `More files…` read as "the list is broken", not as "another
    tier" — which is what they used to do.
 7. **Notices** — a dimmed row when a tool is missing, a binary is not installed,
@@ -126,31 +125,77 @@ row does nothing.
 **Every answer row confirms its copy the same way and stays open** — maths
 and conversions show `Copied!`, a colour shows `Color copied!` — because the
 pill lives inside the card, and closing in the same breath would hide it
-before it is seen. Enter again re-copies; **Esc** or a click outside
-dismisses. The pill used to be the theme's 8 %-alpha highlight, which read
-straight through a busy background — it is now that tone composited to full
-opacity, with the accent as its border (the theme's selected-border alpha
-defaults to 0, which would leave nothing to separate it from the card).
+before it is seen. Enter again re-copies; the pill fades out on its own after
+about a second and a half, and a click outside closes the card (and the pill
+with it). **Esc does not dismiss it** — Esc clears the query first, and only
+closes the launcher when the query is already empty. The pill used to be the
+theme's 8 %-alpha highlight, which read straight through a busy background — it
+is now that tone composited to full opacity, with the accent as its border
+(the theme's selected-border alpha defaults to 0, which would leave nothing to
+separate it from the card).
 
 **Ctrl+V** (or **Shift+Insert**) reads the clipboard and appends it to the query —
 the launcher has no text field, so this is how a copied hex, path or phrase gets
 in. It works in `dmenu` prompts too (those are the same filter, rebuilt against
-the caller's list). Only the first line is used, control characters are dropped and the paste is
+the caller's list — the pack replaces the stock menu, so `omarchy-menu-select`
+and `omarchy-menu-input` reach it). Only the first line is used, control
+characters are dropped and the paste is
 capped at 200 characters, so dropping a document in cannot fill the query with
 something unreadable. Pasting `#ff000080` answers with the colour row; a
 clipboard holding an image pastes nothing (silently, as a text field would).
 
+The 200-character cap counts **characters, not bytes**: a paste that would cut
+an emoji in half is trimmed one character earlier instead. Half a character is
+not a character, and the rest of the launcher (the web-search row builds a URL
+out of the query) cannot encode one.
+
 **Typing is not restricted to Shift**: any key that produces a printable
 character types it, including the AltGr/Option level-3 characters an
-international layout keeps there (`#`, `@`, `~`, brackets …). Ctrl and Meta
-combinations stay reserved for shortcuts, so nothing is hijacked.
+international layout keeps there (`#`, `@`, `~`, brackets …) and emoji, which
+count as one character. Ctrl and Meta combinations stay reserved for shortcuts,
+so nothing is hijacked.
 
 ### How answers coexist
 
 Auto-detected math, conversions, and dates **share the list** with menu items,
-files, windows and content hits (that's why `2026-10-11` shows both `2005` *and*
-your dated files). A **leading `=` is exclusive**: it suppresses every other
-tier — `=hello` shows nothing at all.
+files, windows and content hits — so `2+2` shows `4` *and* your matching files.
+A **leading `=` is exclusive for the search tiers**: it suppresses the file,
+content and window tiers and the web row. It does not suppress the menu's own
+rows, which are still listed and still searchable, so `=hello` is the answer
+plus any menu row that matches `hello` — and a `Missing:` notice still appears
+if a tool is absent.
+
+A date is not arithmetic. `2026-10-21` used to be read as `2026 - 10 - 21` and
+answered with **1995**; a date-shaped query is now left to the file and window
+tiers, and only an explicit `=2026-10-21` asks for the arithmetic.
+
+### Your own menu rows (`~/.config/omarchy/extensions/omarchy-menu.jsonc`)
+
+The launcher reads Omarchy's own menu file **and** your extension file, and
+merges the two. The merge is **per key**: only the fields your entry actually
+writes change; every other field of the default row is left alone.
+
+```jsonc
+{
+  // A default row, changed in two places. Its icon, action, description and
+  // guards are the defaults' — you did not restate them, so they stay.
+  "system.lock": { "label": "Lock Screen", "action": "hyprlock" },
+
+  // A row nobody can see. The label and icon it would have had do not matter.
+  "install.docker": { "when": "false" }
+}
+```
+
+Two rules worth knowing:
+
+- **Aliases replace, they do not add up.** A row with `"aliases": ["x"]` ends
+  up with exactly `["x"]` — the default's other aliases are gone. Write them
+  all out if you want to keep them.
+- **`kind` follows the action.** A row whose `action` you clear becomes a
+  submenu rather than a leaf, and a submenu with no children is not shown.
+
+Rows you add outright (an id Omarchy does not know) work the same way: give it
+a `label`, and an `action` if it should do something.
 
 ### Frecency (it learns, then forgets)
 
@@ -260,8 +305,9 @@ switches" block — flip one and restart the shell:
   preference according to the detected file manager (`xdg-open` is the fallback)
 - optional: `baloosearch6` + a running Baloo index — content search tier
   (without it the tier is simply empty; nothing breaks)
-- optional: `git` or `patch` — only for the menu-ranking patch; the pack
-  installs fine without them (ranking falls back to upstream behavior)
+- optional: `git` — only if you want to apply `patches/omarchy-launcher-v2.patch`
+  instead of copying the files; `install.sh` itself needs neither `git` nor
+  `patch` (it copies, and only reads `git` to identify your base revision)
 
 ## Install
 
@@ -275,9 +321,10 @@ The installer:
 
 1. checks dependencies and tells you which tiers any missing one degrades,
 2. backs up every file it touches to `~/.local/share/omarchy-backups/launcher-v2/<timestamp>/`,
-3. copies in the enhanced files (and `~/.local/bin/ravi-window-focus` for window focusing),
-4. applies the optional 5-line menu-ranking patch (skipped harmlessly if your base differs),
-5. restarts the shell if it can (Quickshell has no QML hot-reload — log out/in otherwise).
+3. copies in the enhanced files — `Menu.qml`, `MenuModel.js`, `OverlayWindow.qml`
+   and `~/.local/bin/ravi-window-focus`; if any copy fails it puts the backed-up
+   files back and says so rather than leaving the tree half-upgraded,
+4. restarts the shell if it can (Quickshell has no QML hot-reload — log out/in otherwise).
 
 Re-running `bash install.sh` is a safe update: it overwrites, and takes a fresh
 backup whenever the installed files — or the live quickshell mirror — differ
@@ -303,19 +350,34 @@ pack — keep or delete it.
 | File | Change |
 |---|---|
 | `shell/plugins/menu/Menu.qml` | All new tiers, answer rows, frecency, right-click copy (drop-in replacement) |
-| `shell/Ui/OverlayWindow.qml` | Holds overlay geometry ~280 ms on close so the menu's fade-out can play (drop-in replacement) |
-| `shell/plugins/menu/MenuModel.js` | Optional: leaf actions rank above submenu containers (applied as a patch) |
+| `shell/Ui/OverlayWindow.qml` | Holds overlay geometry ~280 ms on close **for the menu only**, so its fade-out can play (drop-in replacement) |
+| `shell/plugins/menu/MenuModel.js` | Leaf actions rank above submenu containers, the guard batch runs in parallel, the extension merge is per key, and the JSONC parser tolerates comments (drop-in replacement) |
 | `~/.local/bin/ravi-window-focus` | New helper: focuses a window by address via Hyprland's lua dispatch |
 
-`patches/omarchy-launcher-v2.patch` is the complete, reviewable diff of
+The installer **copies** all three shell files in rather than patching them:
+the pack and the plugin edition ship byte-identical copies, so the two editions
+cannot drift apart. `patches/omarchy-launcher-v2.patch` is the complete,
+reviewable diff of
 all three files against upstream Omarchy shell commit `821ae58` — if you run
 that base you may `git apply` it instead of copying files. The patch covers
 those three files only: also install the window-focus helper with
 `install -Dm755 files/ravi-window-focus ~/.local/bin/ravi-window-focus`
 (without it the window tier switches itself off and the `Missing:` row says
 so — window rows are never shown as Enter-able dead ends).
-`patches/menu-model-ranking.patch` is the standalone ranking hunk, and the
-complete patch *includes* it — regenerate the two together, never one alone.
+
+The overlay's close-hold is **opt-in and off by default**, because the hold
+keeps the surface fullscreen and visible: a consumer that draws a scrim
+without binding it to `shown` (the emoji picker, the clipboard history, the
+reminder flow, the wifi-QR panel) would otherwise leave that scrim on screen
+for a quarter of a second after it was dismissed. Only the menu asks for the
+hold, and only the menu fades.
+
+An install that fails part way through is **rolled back** from the backup it
+took, so the tree is never left half-upgraded (the menu replaced but not its
+overlay is a launcher whose fade never plays). `uninstall.sh` restores a file
+the snapshot does not hold from the Omarchy checkout rather than leaving it
+alone, and restores it from `HEAD` rather than from the git index — so a
+staged local edit does not survive a revert that claims to have reverted.
 
 ## Compatibility
 
@@ -333,7 +395,7 @@ with these; if the launcher misbehaves after an update, re-run
 
 File search covers `$HOME` only, using fd's defaults (hidden and gitignored
 paths skipped). Symlinks are neither followed nor matched while searching —
-fd reports them as their own type — but they *are* listed while browsing a
+fd's file type does not include them — but they *are* listed while browsing a
 folder. Filenames containing newlines cannot be represented in the line
 protocol the tiers use and would surface as junk rows.
 Window rows read `hyprctl clients`.

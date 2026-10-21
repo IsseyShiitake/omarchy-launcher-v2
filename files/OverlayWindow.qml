@@ -18,11 +18,20 @@ PanelWindow {
   property int shownKeyboardFocus: WlrKeyboardFocus.Exclusive
 
   // Fedora port (2026-10-03): hold the fullscreen geometry briefly after
-  // shown drops, so consumers can fade their content out before the surface
-  // parks to 1x1. Consumers that do not fade render nothing in that window
-  // (their content hides itself with shown), so the hold is invisible.
-  property int hideHoldMs: 280
-  readonly property bool holdGeometry: shown || hideHold.running
+  // shown drops, so a consumer that fades its content out can do so before
+  // the surface parks to 1x1.
+  //
+  // OPT-IN, and OFF by default. The hold keeps the surface fullscreen AND
+  // keeps contentItem visible, so a consumer that draws an opaque scrim
+  // without binding it to `shown` would leave that scrim on screen for the
+  // whole hold. The emoji picker, the clipboard history, the reminder flow
+  // and the wifi-QR panel all draw a constant scrim and relied on
+  // contentItem.visible going false the instant `shown` dropped — with a
+  // global hold they kept a 50-78% black veil for a quarter of a second
+  // after they were dismissed. Only the menu fades, so only the menu opts in
+  // (Menu.qml sets hideHoldMs on its own instance).
+  property int hideHoldMs: 0
+  readonly property bool holdGeometry: shown || (hideHoldMs > 0 && hideHold.running)
 
   // The surface no longer lands on the focused output by being mapped there,
   // so it follows the focused monitor each time it is shown. Unset until the
@@ -41,7 +50,7 @@ PanelWindow {
 
   onShownChanged: {
     if (shown) targetScreen = focusedScreen() || targetScreen
-    else hideHold.restart()
+    else if (hideHoldMs > 0) hideHold.restart()
   }
 
   Timer {

@@ -1,29 +1,38 @@
 diff --git a/shell/Ui/OverlayWindow.qml b/shell/Ui/OverlayWindow.qml
-index 43a9c32c..34de5d22 100644
+index 43a9c32c..be562837 100644
 --- a/shell/Ui/OverlayWindow.qml
 +++ b/shell/Ui/OverlayWindow.qml
-@@ -17,6 +17,13 @@ PanelWindow {
+@@ -17,6 +17,22 @@ PanelWindow {
    property int shownLayer: WlrLayer.Overlay
    property int shownKeyboardFocus: WlrKeyboardFocus.Exclusive
  
 +  // Fedora port (2026-10-03): hold the fullscreen geometry briefly after
-+  // shown drops, so consumers can fade their content out before the surface
-+  // parks to 1x1. Consumers that do not fade render nothing in that window
-+  // (their content hides itself with shown), so the hold is invisible.
-+  property int hideHoldMs: 280
-+  readonly property bool holdGeometry: shown || hideHold.running
++  // shown drops, so a consumer that fades its content out can do so before
++  // the surface parks to 1x1.
++  //
++  // OPT-IN, and OFF by default. The hold keeps the surface fullscreen AND
++  // keeps contentItem visible, so a consumer that draws an opaque scrim
++  // without binding it to `shown` would leave that scrim on screen for the
++  // whole hold. The emoji picker, the clipboard history, the reminder flow
++  // and the wifi-QR panel all draw a constant scrim and relied on
++  // contentItem.visible going false the instant `shown` dropped — with a
++  // global hold they kept a 50-78% black veil for a quarter of a second
++  // after they were dismissed. Only the menu fades, so only the menu opts in
++  // (Menu.qml sets hideHoldMs on its own instance).
++  property int hideHoldMs: 0
++  readonly property bool holdGeometry: shown || (hideHoldMs > 0 && hideHold.running)
 +
    // The surface no longer lands on the focused output by being mapped there,
    // so it follows the focused monitor each time it is shown. Unset until the
    // first show lets the compositor choose.
-@@ -32,17 +39,25 @@ PanelWindow {
+@@ -32,17 +48,25 @@ PanelWindow {
      return null
    }
  
 -  onShownChanged: if (shown) targetScreen = focusedScreen() || targetScreen
 +  onShownChanged: {
 +    if (shown) targetScreen = focusedScreen() || targetScreen
-+    else hideHold.restart()
++    else if (hideHoldMs > 0) hideHold.restart()
 +  }
 +
 +  Timer {
@@ -45,7 +54,7 @@ index 43a9c32c..34de5d22 100644
    WlrLayershell.keyboardFocus: shown ? shownKeyboardFocus : WlrKeyboardFocus.None
  
    // Draw nothing until the surface has actually grown. A frame drawn while it
-@@ -51,6 +66,6 @@ PanelWindow {
+@@ -51,6 +75,6 @@ PanelWindow {
    Binding {
      target: window.contentItem
      property: "visible"
@@ -54,7 +63,7 @@ index 43a9c32c..34de5d22 100644
    }
  }
 diff --git a/shell/plugins/menu/Menu.qml b/shell/plugins/menu/Menu.qml
-index 1625375e..70322c3a 100644
+index 1625375e..613b7f16 100644
 --- a/shell/plugins/menu/Menu.qml
 +++ b/shell/plugins/menu/Menu.qml
 @@ -9,19 +9,32 @@ import "MenuModel.js" as MenuModel
@@ -392,7 +401,7 @@ index 1625375e..70322c3a 100644
    }
  
    function mergeProviderRows(rows, menuId, providerKey) {
-@@ -418,6 +628,1133 @@ Item {
+@@ -418,6 +628,1141 @@ Item {
      if (spec && spec.volatile) root.providersLoaded[id] = false
    }
  
@@ -853,6 +862,14 @@ index 1625375e..70322c3a 100644
 +    var q = String(query || "").trim()
 +    if (!q) return ""
 +    if (q.charAt(0) === "=") return q.substring(1).trim()
++    // A date is not arithmetic. "2026-10-21" has a digit and a "-", so the
++    // auto-detect used to accept it — and the calculator then read it as
++    // 2026 - 10 - 21 and answered 1995, with the answer row claiming it.
++    // Year-first (2026-10-21, 2026/10/21, 2026.10.21) and year-last
++    // (10-21-2026) shapes are rejected before the calculator sees them; an
++    // explicit "=" still computes them, because the user asked for it.
++    if (/^\d{4}[-/.]\d{1,2}(?:[-/.]\d{1,2})?$/.test(q)) return ""
++    if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{4}$/.test(q)) return ""
 +    if (/[0-9]/.test(q) && /[+\-*/%^(]/.test(q)) return q
 +    return ""
 +  }
@@ -1526,7 +1543,7 @@ index 1625375e..70322c3a 100644
    function loadProviderForMenu(id) {
      var entry = root.item(id)
      if (!entry || !entry.provider || root.providersLoaded[id]) return
-@@ -519,7 +1856,13 @@ Item {
+@@ -519,7 +1864,13 @@ Item {
    }
  
    function displayRow(entry, detail, score, section) {
@@ -1541,7 +1558,7 @@ index 1625375e..70322c3a 100644
    }
  
    function rowSelectable(index) {
-@@ -555,7 +1898,6 @@ Item {
+@@ -555,7 +1906,6 @@ Item {
  
    function rebuildDmenuDisplay() {
      displayModel.clear()
@@ -1549,7 +1566,7 @@ index 1625375e..70322c3a 100644
  
      if (root.mode === "input") {
        layoutSerial += 1
-@@ -590,7 +1932,9 @@ Item {
+@@ -590,7 +1940,9 @@ Item {
          action: "",
          provider: "",
          score: i,
@@ -1560,7 +1577,7 @@ index 1625375e..70322c3a 100644
        })
      }
  
-@@ -606,11 +1950,25 @@ Item {
+@@ -606,11 +1958,25 @@ Item {
    }
  
    function rebuildDisplay() {
@@ -1586,7 +1603,7 @@ index 1625375e..70322c3a 100644
      displayModel.clear()
  
      if (!root.rowsLoaded) return
-@@ -619,36 +1977,374 @@ Item {
+@@ -619,36 +1985,387 @@ Item {
      root.activeMenu = active
      var rows = []
      var query = root.filterText.trim()
@@ -1645,10 +1662,15 @@ index 1625375e..70322c3a 100644
 +      // hyprctl run can never leave rows that matched an older filter on
 +      // screen. Windows answer a search, so a folder listing leaves them out.
 +      // A cache older than the ceiling counts as absent (fail-closed).
++      //
++      // The window tier waits for a SECOND character, like the file and
++      // content tiers do. It used to answer from the warm cache as soon as
++      // the filter was one character long, so backing "ab" down to "a"
++      // listed up to eight windows matched on a single letter.
 +      var winFresh = root.winClientsJson !== ""
 +        && (Date.now() - root.winClientsAt) < root.winClientsMaxAgeMs
 +      var winRows = (browsing || answer.mode === "forced" || !winFresh
-+        || root.binaries.focus === false)
++        || query.length < 2 || root.binaries.focus === false)
 +        ? [] : root.windowRowsFor(root.winClientsJson, query)
 +      if (winRows.length > 0) {
 +        var winSection = rows.length > 0 ? "windows" : ""
@@ -1739,8 +1761,16 @@ index 1625375e..70322c3a 100644
 +        ? root.fileTierLimit : root.uncappedFileLimit
 +      var folderTotal = folderHits.length
 +      var fileTotal = fileHits.length
-+      var folderCut = !browsing && folderTotal > folderLimit
-+      var fileCut = !browsing && fileTotal > fileLimit
++      // fd stops at --max-results, so a block that came back exactly full may
++      // have been truncated even when nothing was cut for display. That only
++      // happens when the DISPLAY cap IS the fd cap — the capFileTier:false
++      // mode, where the block holds 6 folders / 12 files. A full block there
++      // used to be reported as an ordinary count with no hint at all, so the
++      // extra matches on disk were simply not accounted for.
++      var folderSaturated = !browsing && folderTotal >= root.fdResultLimit(true)
++      var fileSaturated = !browsing && fileTotal >= root.fdResultLimit(false)
++      var folderCut = !browsing && (folderTotal > folderLimit || folderSaturated)
++      var fileCut = !browsing && (fileTotal > fileLimit || fileSaturated)
 +      var folderOverflow = folderCut && redirects
 +      var fileOverflow = fileCut && redirects
 +      if (folderCut) folderHits = folderHits.slice(0, folderLimit)
@@ -1779,11 +1809,8 @@ index 1625375e..70322c3a 100644
 +            isFolder: hit.isFolder === true || hit.isDir === true
 +          })
 +        }
-       }
- 
--      var searchSort = function(a, b) {
--        if (a.score !== b.score) return a.score - b.score
--        return a.path.localeCompare(b.path)
++      }
++
 +      // One section per block — the section value is what draws the hairline,
 +      // so folders and files only read as two blocks while the split is on. A
 +      // browse listing opens with its ".." row, in the folder block, and both
@@ -1815,13 +1842,8 @@ index 1625375e..70322c3a 100644
 +        // different tier back into an unmarked tail of the file block is not a
 +        // "look", it is the bug.
 +        pushHitRows(contentHits, rows.length > 0 ? "content" : "")
-       }
- 
--      currentRows.sort(searchSort)
--      drilldownRows.sort(searchSort)
--      root.searchDivider = currentRows.length > 0 && drilldownRows.length > 0
--      if (root.searchDivider) {
--        for (var d = 0; d < drilldownRows.length; d++) drilldownRows[d].section = "drilldown"
++      }
++
 +      // fd caps a browse listing too, far higher than a search. A full block is
 +      // the only signal that the cap was reached, and saying so beats dropping
 +      // entries silently.
@@ -1936,8 +1958,11 @@ index 1625375e..70322c3a 100644
 +          swatch: "",
 +          isFolder: false
 +        })
-+      }
-+
+       }
+ 
+-      var searchSort = function(a, b) {
+-        if (a.score !== b.score) return a.score - b.score
+-        return a.path.localeCompare(b.path)
 +      // A tier whose tool is missing is silent by nature (a Process that cannot
 +      // start never even reports). Say so once, as a dimmed row the cursor
 +      // steps over, and only while searching — pushed BEFORE the web row, so
@@ -1955,8 +1980,13 @@ index 1625375e..70322c3a 100644
 +        if (root.binaries.kdeopen === false && root.binaries.gio === false
 +            && root.binaries.xdgopen === false) gone.push("kde-open/gio/xdg-open (opening files)")
 +        if (gone.length > 0) rows.push(root.hintRow("Missing: " + gone.join(", ")))
-+      }
-+
+       }
+ 
+-      currentRows.sort(searchSort)
+-      drilldownRows.sort(searchSort)
+-      root.searchDivider = currentRows.length > 0 && drilldownRows.length > 0
+-      if (root.searchDivider) {
+-        for (var d = 0; d < drilldownRows.length; d++) drilldownRows[d].section = "drilldown"
 +      // Web-search fallback: always the last row, so a
 +      // query the machine can't answer is one Enter away from the browser. A
 +      // folder listing is not a query, so it has none.
@@ -1970,7 +2000,7 @@ index 1625375e..70322c3a 100644
 +          appIcon: "",
 +          appId: "",
 +          label: "Search the web for \u201C" + query + "\u201D",
-+          target: "https://duckduckgo.com/?q=" + encodeURIComponent(query),
++          target: "https://duckduckgo.com/?q=" + root.safeEncodeURIComponent(query),
 +          detail: "DuckDuckGo",
 +          path: "",
 +          childCount: 0,
@@ -1986,7 +2016,7 @@ index 1625375e..70322c3a 100644
      } else {
        for (var j = 0; j < root.itemOrder.length; j++) {
          var child = root.item(root.itemOrder[j])
-@@ -677,8 +2373,19 @@ Item {
+@@ -677,8 +2394,19 @@ Item {
      for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
      layoutSerial += 1
  
@@ -2006,10 +2036,12 @@ index 1625375e..70322c3a 100644
      Qt.callLater(function() {
        if (displayModel.count > 0) root.revealCursor()
      })
-@@ -706,6 +2413,139 @@ Item {
+@@ -706,15 +2434,216 @@ Item {
      }
    }
  
+-  function select(delta) {
+-    if (displayModel.count === 0) return
 +  // ---- Clipboard paste ----
 +  // Quickshell 0.2.1 has no clipboard API, so the filter is fed by wl-paste —
 +  // the same wl-clipboard package the copy actions already need. A clipboard
@@ -2031,7 +2063,11 @@ index 1625375e..70322c3a 100644
 +    pasteWatchdog.restart()
 +    return true
 +  }
-+
+ 
+-    root.disarmPointer()
+-    var from = cursorActive ? selectedIndex + delta : (delta < 0 ? displayModel.count - 1 : 0)
+-    var target = root.nextSelectable(from, delta)
+-    if (target < 0) return
 +  // A launcher filter is one line: keep the paste's first line, drop control
 +  // characters and cap the length, so dropping a document in cannot fill the
 +  // query with something unreadable — or un-deletable one keypress at a time.
@@ -2039,9 +2075,72 @@ index 1625375e..70322c3a 100644
 +    var text = String(raw || "")
 +    text = text.split("\n")[0].replace(/[\u0000-\u001f\u007f]/g, "").trim()
 +    if (!text) return false
-+    if (text.length > 200) text = text.substring(0, 200)
++    // The cap counts CODE POINTS. A UTF-16-unit cap can cut a surrogate pair
++    // in half, and the lone surrogate that survives then makes the web row's
++    // encodeURIComponent throw — which aborted the rebuild AFTER the row
++    // model was cleared, so the list came up empty and every later keystroke
++    // threw again.
++    if (root.codePoints(text).length > 200) text = root.codePoints(text).slice(0, 200).join("")
 +    root.setFilter(root.filterText ? root.filterText + text : text)
 +    return true
++  }
++
++  // The characters of a string, counted by CODE POINT rather than by UTF-16
++  // code unit.
++  //
++  // QML's JS engine splits surrogate pairs where a standard engine does not:
++  // Array.from("😀").length is 2 here and 1 in V8. So a check written with
++  // Array.from() refuses an emoji outright, and a cap written with
++  // .length/.substring() can cut a pair in half and leave a lone surrogate —
++  // which then makes encodeURIComponent() throw, aborting the rebuild with
++  // the row model already cleared. This walks the string by hand so the
++  // behaviour is the same in every engine.
++  function codePoints(text) {
++    var s = String(text || "")
++    var out = []
++    var i = 0
++    while (i < s.length) {
++      var c = s.charCodeAt(i)
++      var low = i + 1 < s.length ? s.charCodeAt(i + 1) : 0
++      // A high surrogate followed by a LOW surrogate is one astral character.
++      // A high surrogate followed by anything else is a lone one: it stays a
++      // single unit, so it is not merged with — and hidden behind — the
++      // character after it.
++      var step = (c >= 0xD800 && c <= 0xDBFF && low >= 0xDC00 && low <= 0xDFFF) ? 2 : 1
++      out.push(s.substring(i, i + step))
++      i += step
++    }
++    return out
++  }
++
++  // encodeURIComponent throws URIError on a lone surrogate. The filter can
++  // still hold one if the clipboard handed us a broken string, so the web
++  // row's URL is built defensively: a query that cannot be encoded loses only
++  // the units that cannot be encoded, instead of taking the whole rebuild down
++  // with it.
++  function safeEncodeURIComponent(value) {
++    var text = String(value === undefined || value === null ? "" : value)
++    try {
++      return encodeURIComponent(text)
++    } catch (e) {
++      // Strip only the LONE surrogates. A blanket /[\uD800-\uDFFF]/g strip
++      // would also delete both halves of every valid pair, turning an emoji
++      // in the same query into nothing.
++      var parts = root.codePoints(text)
++      var kept = []
++      for (var i = 0; i < parts.length; i++) {
++        var unit = parts[i].charCodeAt(0)
++        if (parts[i].length === 1 && unit >= 0xD800 && unit <= 0xDFFF) continue
++        kept.push(parts[i])
++      }
++      try {
++        return encodeURIComponent(kept.join(""))
++      } catch (e2) {
++        // Cannot happen once the lone units are gone; a URL builder must never
++        // throw, though, so the row degrades to an empty query instead.
++        return ""
++      }
++    }
 +  }
 +
 +  // The whole key decision tree in one callable place. Keys.onPressed cannot be
@@ -2122,14 +2221,18 @@ index 1625375e..70322c3a 100644
 +        else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
 +      } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
 +      else root.settleCursor()
-+    } else if (text && Array.from(text).length === 1
++    } else if (text && root.codePoints(text).length === 1
 +               && text.codePointAt(0) >= 32 && text.codePointAt(0) !== 127
 +               && (modifiers & (Qt.ControlModifier | Qt.MetaModifier)) === 0) {
 +      // Anything that is not a Ctrl/Meta shortcut types: Shift for capitals and
 +      // AltGr/Alt for the level-3 characters an international layout keeps there
 +      // (#, @, ~, brackets …), which the old No/Shift-only test silently ate.
 +      // Counted in CODE POINTS so a surrogate pair (emoji, one keypress on
-+      // some layouts) is one character, not a refused length-2 string.
++      // some layouts) is one character, not a refused length-2 string. The
++      // count uses codePoints() rather than Array.from(): in this engine
++      // Array.from() splits surrogate pairs (an emoji came back as 2), so the
++      // emoji was refused — and, being unhandled, it also leaked to the focus
++      // chain instead of being typed.
 +      // Keys that produce no text (function keys, Alt+Tab) never reach here, so
 +      // no shortcut is hijacked. Known limitation, deliberately left: a layout
 +      // that delivers AltGr AS Ctrl+Alt (rather than GroupSwitchModifier) is
@@ -2143,18 +2246,20 @@ index 1625375e..70322c3a 100644
 +    return true
 +  }
 +
-   function select(delta) {
-     if (displayModel.count === 0) return
- 
-@@ -715,6 +2555,7 @@ Item {
-     if (target < 0) return
++  function select(delta) {
++    if (displayModel.count === 0) return
++
++    root.disarmPointer()
++    var from = cursorActive ? selectedIndex + delta : (delta < 0 ? displayModel.count - 1 : 0)
++    var target = root.nextSelectable(from, delta)
++    if (target < 0) return
  
      cursorActive = true
 +    cursorPinned = true
      selectedIndex = target
      revealCursor()
    }
-@@ -723,9 +2564,11 @@ Item {
+@@ -723,9 +2652,11 @@ Item {
      panel.freezeCardTop()
      root.filterText = nextFilter
      root.selectedIndex = 0
@@ -2167,7 +2272,7 @@ index 1625375e..70322c3a 100644
      root.rebuildDisplay()
    }
  
-@@ -734,8 +2577,11 @@ Item {
+@@ -734,8 +2665,11 @@ Item {
      if (!root.item(id)) id = "root"
      if (pushHistory && id !== root.activeMenu) root.navStack = root.navStack.concat([root.activeMenu])
      root.activeMenu = id
@@ -2179,7 +2284,7 @@ index 1625375e..70322c3a 100644
      root.cursorActive = true
      if (fromPointer) pointerGate.allowInitialSample()
      else root.disarmPointer()
-@@ -745,6 +2591,8 @@ Item {
+@@ -745,6 +2679,8 @@ Item {
    }
  
    function goBack() {
@@ -2188,7 +2293,7 @@ index 1625375e..70322c3a 100644
      if (root.activeMenu === "root") return false
  
      if (root.navStack.length > 0) {
-@@ -775,6 +2623,10 @@ Item {
+@@ -775,6 +2711,10 @@ Item {
      if (!root.rowSelectable(index)) return
  
      var row = displayModel.get(index)
@@ -2199,7 +2304,7 @@ index 1625375e..70322c3a 100644
      if (row.kind === "menu" || row.kind === "link") {
        root.setActiveMenu(row.target || row.itemId, true, fromPointer)
      } else if (row.kind === "app") {
-@@ -783,7 +2635,53 @@ Item {
+@@ -783,7 +2723,62 @@ Item {
        applySerial = requestSerial
        opened = false
        filterText = ""
@@ -2249,11 +2354,20 @@ index 1625375e..70322c3a 100644
 +      opened = false
 +      filterText = ""
 +      root.clearFileSearch()
-+      Util.execArgv(["xdg-open", row.target])
++      // An opener that is actually installed: xdg-open first, then whatever
++      // the file chain would use. A hardcoded xdg-open died silently on a
++      // machine without it, and the "Missing:" notice never fired for it.
++      var webOpener = root.webOpenCommand
++      if (webOpener === "") {
++        Util.execDetached("notify-send -u normal " + Util.shellQuote("Nothing can open the browser")
++          + " " + Util.shellQuote("No opener was found (xdg-open / kde-open / gio) — install one and search again."))
++      } else {
++        Util.execArgv(String(webOpener).trim().split(/\s+/).concat([row.target]))
++      }
      } else {
        root.applySelected(row.itemId, row.action)
      }
-@@ -819,6 +2717,7 @@ Item {
+@@ -819,6 +2814,7 @@ Item {
      applySerial = requestSerial
      opened = false
      filterText = ""
@@ -2261,7 +2375,7 @@ index 1625375e..70322c3a 100644
      root.finishRequest(value)
    }
  
-@@ -828,6 +2727,7 @@ Item {
+@@ -828,6 +2824,7 @@ Item {
      applySerial = requestSerial
      opened = false
      filterText = ""
@@ -2269,7 +2383,7 @@ index 1625375e..70322c3a 100644
      root.runAction(action)
    }
  
-@@ -835,6 +2735,8 @@ Item {
+@@ -835,6 +2832,8 @@ Item {
      if (root.dmenuActive) root.finishRequest(null)
      opened = false
      filterText = ""
@@ -2278,7 +2392,7 @@ index 1625375e..70322c3a 100644
    }
  
    function openExistingMenu(initialMenu) {
-@@ -845,11 +2747,25 @@ Item {
+@@ -845,11 +2844,25 @@ Item {
      doneFile = ""
      activeMenu = root.item(initialMenu) ? initialMenu : "root"
      navStack = []
@@ -2304,7 +2418,7 @@ index 1625375e..70322c3a 100644
      opened = true
      rebuildDisplay()
      invalidateVolatileProvider(activeMenu)
-@@ -869,12 +2785,19 @@ Item {
+@@ -869,12 +2882,19 @@ Item {
      selectionFile = String(payload.selectionFile || "")
      doneFile = String(payload.doneFile || "")
      requestActive = !!doneFile
@@ -2326,17 +2440,35 @@ index 1625375e..70322c3a 100644
      cursorActive = mode !== "input"
      root.disarmPointer()
      opened = true
-@@ -882,6 +2805,9 @@ Item {
+@@ -882,6 +2902,27 @@ Item {
  
      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
    }
 +  // The capability probe runs once, at shell start.
-+  Component.onCompleted: root.probeBinaries()
++  Component.onCompleted: {
++    root.probeBinaries()
++    // Opt into the overlay's post-close geometry hold, so the card's 200 ms
++    // fade-out can play before the surface parks to 1x1. The hold is opt-in
++    // because it keeps the surface fullscreen AND contentItem visible, which
++    // would leave an opaque scrim on screen for consumers that draw one
++    // without binding it to `shown` (the emoji picker, the clipboard history,
++    // the reminder flow, the wifi-QR panel).
++    //
++    // Guarded, because in plugin mode the overlay is the STOCK one, which has
++    // no hideHoldMs property: reading an unknown property yields undefined
++    // (it does not throw), so the assignment is simply skipped and the
++    // surface collapses immediately — the plugin's documented behaviour.
++    try {
++      if (panel.hideHoldMs !== undefined) panel.hideHoldMs = 280
++    } catch (e) {
++      // An overlay without the hold property: nothing to opt into.
++    }
++  }
 +
    ListModel { id: displayModel }
  
    // ----------------------------------------------------------- route surface
-@@ -908,7 +2834,6 @@ Item {
+@@ -908,7 +2949,6 @@ Item {
      }
      // If it's a link (a redirect to another menu), follow the link.
      if (entry && entry.kind === "link" && entry.target) id = entry.target
@@ -2344,7 +2476,7 @@ index 1625375e..70322c3a 100644
      root.openExistingMenu(id)
      return "ok"
    }
-@@ -917,13 +2842,328 @@ Item {
+@@ -917,13 +2957,353 @@ Item {
      pointerGate.reset()
    }
  
@@ -2456,6 +2588,20 @@ index 1625375e..70322c3a 100644
 +    }
 +    return "xdg-open"
 +  }
++  // The web row opens a URL, not a file. xdg-open is the right tool for a
++  // URL, but it is not installed everywhere, and a row that dies silently
++  // is worse than one that says why: the "Missing:" notice only fires when
++  // ALL THREE openers are gone, so a lone missing xdg-open took the web
++  // search row down without a word. The URL row therefore picks the first
++  // opener that is actually present, xdg-open first.
++  readonly property string webOpenCommand: {
++    if (root.openerAvailable("xdg-open")) return "xdg-open"
++    var order = root.fileOpenOrder()
++    for (var i = 0; i < order.length; i++) {
++      if (root.openerAvailable(String(order[i]).split(/\s+/)[0])) return order[i]
++    }
++    return ""
++  }
 +  // Opens a path the way this desktop opens it. The path is an ARGUMENT, never
 +  // spliced into a command string, so a filename cannot be read as shell code.
 +  function openPath(path) {
@@ -2464,7 +2610,12 @@ index 1625375e..70322c3a 100644
 +    // With no resolver at all the spawn would be a closed menu and nothing
 +    // else — the menu is already closed here, so a notification is the only
 +    // channel left.
-+    if (root.binariesProbed && root.binaries.kdeopen === false
++    //
++    // A CONFIGURED opener is the user's explicit choice and is exempt: it
++    // works whether or not kde-open / gio / xdg-open are installed, so
++    // reporting "nothing can open files" while a working opener sits in
++    // fileOpenCommand was wrong — the configured command was never run.
++    if (root.fileOpenCommand === "" && root.binariesProbed && root.binaries.kdeopen === false
 +        && root.binaries.gio === false && root.binaries.xdgopen === false) {
 +      Util.execDetached("notify-send -u normal " + Util.shellQuote("Nothing can open files")
 +        + " " + Util.shellQuote("No opener was found (kde-open / gio / xdg-open) — install one and search again."))
@@ -2505,7 +2656,7 @@ index 1625375e..70322c3a 100644
 +  // and a command with no %1 gets it as a trailing argument instead of
 +  // silently dropping the query — this row's whole purpose is the handover.
 +  function searchQueryToken(query) {
-+    return encodeURIComponent(String(query || "")).replace(/[!'()*~]/g, function(ch) {
++    return root.safeEncodeURIComponent(query).replace(/[!'()*~]/g, function(ch) {
 +      return "%" + ch.charCodeAt(0).toString(16).toUpperCase()
 +    })
 +  }
@@ -2552,6 +2703,12 @@ index 1625375e..70322c3a 100644
 +    focusProc.frecencyKey = frecencyKey
 +    focusProc.command = [Quickshell.env("HOME") + "/.local/bin/ravi-window-focus", address]
 +    focusProc.running = true
++    // Arm the watchdog. Without this the timer that is supposed to kill a
++    // wedged focus run was never started: a hung ravi-window-focus kept the
++    // single focus slot occupied, every later Enter silently overwrote the
++    // one pending slot, and window focusing stayed dead until the shell was
++    // restarted. Every other Process here arms its watchdog at launch.
++    focusWatchdog.restart()
 +  }
 +
    function selectFromPointer(index, item, mouse) {
@@ -2673,7 +2830,7 @@ index 1625375e..70322c3a 100644
    Process {
      id: providerProc
      property string menuId: ""
-@@ -934,14 +3174,111 @@ Item {
+@@ -934,14 +3314,111 @@ Item {
        onRead: function(data) { providerProc.collected += data + "\n" }
      }
      onExited: {
@@ -2786,7 +2943,7 @@ index 1625375e..70322c3a 100644
    Process {
      id: resultProc
      onExited: {
-@@ -950,6 +3287,289 @@ Item {
+@@ -950,6 +3427,289 @@ Item {
      }
    }
  
@@ -3076,7 +3233,7 @@ index 1625375e..70322c3a 100644
    PointerMoveGate {
      id: pointerGate
      referenceItem: card
-@@ -971,6 +3591,7 @@ Item {
+@@ -971,6 +3731,7 @@ Item {
      watchChanges: true
      printErrors: false
      onLoaded: { root.defaultMenuItems = root.parseMenuJsonc(text()); root.rebuildItemsFromSources() }
@@ -3084,7 +3241,7 @@ index 1625375e..70322c3a 100644
      onFileChanged: reload()
    }
  
-@@ -984,6 +3605,73 @@ Item {
+@@ -984,6 +3745,73 @@ Item {
      onFileChanged: reload()
    }
  
@@ -3158,7 +3315,7 @@ index 1625375e..70322c3a 100644
    // ---------------------------------------------------------------- guards
    //
    // `when:` (visibility) and `checked:` (✓ marker) are bash expressions the
-@@ -1019,6 +3707,7 @@ Item {
+@@ -1019,6 +3847,7 @@ Item {
      guardProc.collected = ""
      guardProc.command = ["bash", "-lc", script]
      guardProc.running = true
@@ -3166,7 +3323,7 @@ index 1625375e..70322c3a 100644
    }
  
    Process {
-@@ -1028,6 +3717,7 @@ Item {
+@@ -1028,6 +3857,7 @@ Item {
        onRead: function(data) { guardProc.collected += data + "\n" }
      }
      onExited: function(exitCode, exitStatus) {
@@ -3174,7 +3331,7 @@ index 1625375e..70322c3a 100644
        // A batch that was killed rather than finished has only told us about
        // the rows it reached, and a row whose `when:` went unanswered shows.
        // Keep the last complete set rather than let a half-read one through.
-@@ -1065,6 +3755,18 @@ Item {
+@@ -1065,6 +3895,18 @@ Item {
        if (root.guardsPending) Qt.callLater(function() { root.evaluateGuards() })
      }
    }
@@ -3193,7 +3350,7 @@ index 1625375e..70322c3a 100644
    OverlayWindow {
      id: panel
      shown: root.opened && root.rowsLoaded
-@@ -1075,7 +3777,8 @@ Item {
+@@ -1075,7 +3917,8 @@ Item {
      // then on the card grows and shrinks downward instead of re-centering
      // on every resize, which made the menu jump around. The rows height is
      // frozen at the same moment, so the starting menu also caps how tall the
@@ -3203,7 +3360,7 @@ index 1625375e..70322c3a 100644
      property int cardTop: -1
      property int maxRowsHeight: -1
      readonly property int centeredTop: Math.max(Style.gapsOut, Math.round((height - root.cardHeight) / 2))
-@@ -1087,11 +3790,19 @@ Item {
+@@ -1087,11 +3930,19 @@ Item {
        }
      }
      // The surface stays mapped between opens, so closing is shown going false.
@@ -3225,7 +3382,7 @@ index 1625375e..70322c3a 100644
      }
  
      MouseArea {
-@@ -1101,6 +3812,10 @@ Item {
+@@ -1101,6 +3952,10 @@ Item {
  
      BorderSurface {
        id: card
@@ -3236,7 +3393,7 @@ index 1625375e..70322c3a 100644
        width: root.cardWidth
        height: Math.min(root.cardHeight, panel.height - Style.gapsOut - panel.effectiveCardTop)
        radius: root.cornerRadius
-@@ -1112,6 +3827,44 @@ Item {
+@@ -1112,6 +3967,44 @@ Item {
  
        MouseArea { anchors.fill: parent; onClicked: {} }
  
@@ -3281,7 +3438,7 @@ index 1625375e..70322c3a 100644
        Item {
          id: keyCatcher
          anchors.fill: parent
-@@ -1120,47 +3873,13 @@ Item {
+@@ -1120,47 +4013,13 @@ Item {
  
          Keys.priority: Keys.BeforeItem
          Keys.onPressed: function(event) {
@@ -3332,7 +3489,7 @@ index 1625375e..70322c3a 100644
          }
  
          ConfirmDialog {
-@@ -1202,7 +3921,9 @@ Item {
+@@ -1202,7 +4061,9 @@ Item {
              anchors.left: parent.left
              anchors.right: parent.right
              anchors.verticalCenter: parent.verticalCenter
@@ -3343,7 +3500,7 @@ index 1625375e..70322c3a 100644
              color: root.foreground
              opacity: root.filterText ? 1 : 0.58
              font.family: root.fontFamily
-@@ -1230,8 +3951,8 @@ Item {
+@@ -1230,8 +4091,8 @@ Item {
                required property string section
  
                width: ListView.view.width
@@ -3354,7 +3511,7 @@ index 1625375e..70322c3a 100644
  
                Rectangle {
                  anchors.left: parent.left
-@@ -1260,10 +3981,13 @@ Item {
+@@ -1260,10 +4121,13 @@ Item {
                required property string action
                required property int childCount
                required property bool disabled
@@ -3369,7 +3526,7 @@ index 1625375e..70322c3a 100644
  
                width: ListView.view.width
                height: root.rowHeightForDetail(row.detail)
-@@ -1301,6 +4025,22 @@ Item {
+@@ -1301,6 +4165,22 @@ Item {
                  y: contentColumn.y + labelText.y + (labelText.height - height) / 2
                }
  
@@ -3392,7 +3549,7 @@ index 1625375e..70322c3a 100644
                Image {
                  id: appIconImage
                  visible: row.isApp
-@@ -1387,6 +4127,7 @@ Item {
+@@ -1387,6 +4267,7 @@ Item {
                  id: mouseArea
                  anchors.fill: parent
                  hoverEnabled: true
@@ -3400,7 +3557,7 @@ index 1625375e..70322c3a 100644
                  cursorShape: row.disabled ? Qt.ArrowCursor : Qt.PointingHandCursor
                  onEntered: root.selectFromPointer(row.index, row, {
                    x: mouseArea.mouseX,
-@@ -1395,7 +4136,12 @@ Item {
+@@ -1395,7 +4276,12 @@ Item {
                  onPositionChanged: function(mouse) {
                    root.selectFromPointer(row.index, row, mouse)
                  }
@@ -3415,10 +3572,236 @@ index 1625375e..70322c3a 100644
                    root.cursorActive = true
                    root.selectedIndex = row.index
 diff --git a/shell/plugins/menu/MenuModel.js b/shell/plugins/menu/MenuModel.js
-index 53c49768..cd6ec8d9 100644
+index 53c49768..961ef5ec 100644
 --- a/shell/plugins/menu/MenuModel.js
 +++ b/shell/plugins/menu/MenuModel.js
-@@ -354,7 +354,10 @@ function searchScore(items, entry, query) {
+@@ -1,7 +1,108 @@
++// JSONC -> JSON, in ONE pass.
++//
++// The previous version only removed comments that occupied a whole line
++// (/^\s*\/\/[^\n]*(\n|$)/gm) and then stripped trailing commas with a regex
++// that ran over string literals too. Both were landmines:
++//
++//   - ONE trailing "// note" on a value's line made the WHOLE file parse to
++//     nothing. The launcher then showed an empty menu, with no error and no
++//     log line anywhere: parseMenuJsonc returns [] and the rebuild proceeds
++//     with nothing.
++//   - a string VALUE containing ",}" or ",]" was corrupted, because the
++//     trailing-comma regex matched inside the quotes.
++//
++// This walks the text instead: a comment ends at a newline (//) or at its
++// closing */ (/* */), a string is copied verbatim with its escapes intact,
++// and a comma before a closing brace or bracket is dropped only when it is
++// outside a string.
+ function stripJsonc(raw) {
+-  return String(raw || "")
+-    .replace(/^\s*\/\/[^\n]*(\n|$)/gm, "")
+-    .replace(/,(\s*[}\]])/g, "$1")
++  var text = String(raw || "")
++  // A UTF-8 BOM is invisible in every editor and makes JSON.parse throw, which
++  // would turn the whole menu into nothing. Drop it before anything else.
++  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1)
++  var out = ""
++  var i = 0
++  var n = text.length
++  var inString = false
++  var escaped = false
++
++  while (i < n) {
++    var ch = text.charAt(i)
++
++    if (inString) {
++      out += ch
++      if (escaped) escaped = false
++      else if (ch === "\\") escaped = true
++      else if (ch === '"') inString = false
++      i += 1
++      continue
++    }
++
++    if (ch === '"') {
++      inString = true
++      out += ch
++      i += 1
++      continue
++    }
++
++    if (ch === "/" && text.charAt(i + 1) === "/") {
++      while (i < n && text.charAt(i) !== "\n") i += 1
++      continue
++    }
++
++    if (ch === "/" && text.charAt(i + 1) === "*") {
++      var end = text.indexOf("*/", i + 2)
++      i = end < 0 ? n : end + 2
++      continue
++    }
++
++    if (ch === ",") {
++      // A trailing comma is legal in JSONC and illegal in JSON: drop it —
++      // but only outside a string, so a value like "x,}" keeps its comma.
++      //
++      // "Trailing" has to look PAST a comment. `"label": "A", // note` on the
++      // line above `}` is the ordinary way people annotate an entry, and
++      // looking only at the next non-space character saw the "/" and kept the
++      // comma, so JSON.parse threw and the whole menu came up empty — the
++      // exact silent-empty-menu failure this parser exists to prevent.
++      var next = text.charAt(nextSignificantIndex(text, i + 1))
++      if (next === "}" || next === "]") {
++        i += 1
++        continue
++      }
++    }
++
++    out += ch
++    i += 1
++  }
++
++  return out
++}
++
++// The index of the next character that is neither whitespace nor inside a
++// comment, starting at `from`. A comma is "trailing" when that character is a
++// closing brace or bracket — and a comment in between must not hide it.
++function nextSignificantIndex(text, from) {
++  var i = from
++  var n = text.length
++  while (i < n) {
++    var ch = text.charAt(i)
++    if (/\s/.test(ch)) {
++      i += 1
++      continue
++    }
++    if (ch === "/" && text.charAt(i + 1) === "/") {
++      while (i < n && text.charAt(i) !== "\n") i += 1
++      continue
++    }
++    if (ch === "/" && text.charAt(i + 1) === "*") {
++      var end = text.indexOf("*/", i + 2)
++      i = end < 0 ? n : end + 2
++      continue
++    }
++    return i
++  }
++  return n
+ }
+ 
+ function normalizeAliases(value) {
+@@ -35,10 +136,23 @@ function normalizeItem(id, raw) {
+     aliases: aliases,
+     when: value.when || "",
+     checked: value.checked || "",
+-    disabled: value.disabled || ""
++    disabled: value.disabled || "",
++    // The keys the source actually WROTE. normalizeItem fills every field
++    // with a default, so a merge cannot tell "the user left this alone"
++    // from "the user set it to empty" without this list. It is what makes
++    // the merge per-key: see mergeMenuSources.
++    specified: specifiedKeys(value)
+   }
+ }
+ 
++// The keys a raw JSONC entry actually carries.
++function specifiedKeys(value) {
++  var out = []
++  if (!value || typeof value !== "object") return out
++  for (var key in value) out.push(key)
++  return out
++}
++
+ function parseMenuJsonc(raw) {
+   var stripped = stripJsonc(raw)
+   if (!stripped.trim()) return []
+@@ -47,6 +161,11 @@ function parseMenuJsonc(raw) {
+   try {
+     parsed = JSON.parse(stripped)
+   } catch (e) {
++    // A malformed file used to yield [] with no word anywhere: the launcher
++    // came up empty and nothing said why. The caller cannot fix what it is
++    // not told about, so say it once, in the shell log.
++    console.warn("[launcher] menu JSONC did not parse — this menu source is ignored: "
++      + (e && e.message ? e.message : String(e)))
+     return []
+   }
+   if (typeof parsed !== "object" || parsed === null) return []
+@@ -63,6 +182,18 @@ function parseMenuJsonc(raw) {
+   return out
+ }
+ 
++// Merge the default menu with the user's extension file.
++//
++// PER KEY: only the fields a later source actually WROTE replace the earlier
++// ones. It used to copy every key of the later entry over the earlier one —
++// and normalizeItem fills every field, so a user entry that only added an
++// alias wiped the default row's label, icon, action, description and guards,
++// and re-derived `kind` from the now-empty action (an "action" row became a
++// childless "menu", and a childless menu is invisible). The in-code comment
++// promised per-key behaviour; this is it.
++//
++// `kind` follows the merge, because it is derived from action/target: a row
++// whose action was replaced or cleared is an action row again, or a menu.
+ function mergeMenuSources(defaultItems, userItems) {
+   var nextItems = ({})
+   var nextOrder = []
+@@ -73,12 +204,31 @@ function mergeMenuSources(defaultItems, userItems) {
+     for (var i = 0; i < src.length; i++) {
+       var entry = src[i]
+       if (!entry || !entry.id) continue
+-      if (!nextItems[entry.id]) nextOrder.push(entry.id)
+-      var prior = nextItems[entry.id] || {}
++      var prior = nextItems[entry.id]
++      if (!prior) nextOrder.push(entry.id)
+       var merged = {}
+-      for (var k in prior) merged[k] = prior[k]
+-      for (var k2 in entry) merged[k2] = entry[k2]
++      if (prior) {
++        // A later source: keep the earlier row, then apply ONLY the fields
++        // this source actually wrote.
++        for (var k in prior) merged[k] = prior[k]
++        var specified = entry.specified
++        if (specified) {
++          for (var k2 = 0; k2 < specified.length; k2++) {
++            if (specified[k2] === "specified") continue
++            merged[specified[k2]] = entry[specified[k2]]
++          }
++        } else {
++          // An entry with no key list (a hand-built row) replaces wholesale.
++          for (var k3 in entry) merged[k3] = entry[k3]
++        }
++      } else {
++        // The first source contributes the whole normalised entry, derived
++        // fields (parent, kind) included.
++        for (var k4 in entry) merged[k4] = entry[k4]
++      }
+       merged.id = entry.id
++      merged.kind = merged.action ? "action" : (merged.target ? "link" : "menu")
++      delete merged.specified
+       nextItems[entry.id] = merged
+     }
+   }
+@@ -87,7 +237,7 @@ function mergeMenuSources(defaultItems, userItems) {
+     nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", disabled: "", action: "", provider: "" }
+     nextOrder.unshift("root")
+   }
+-  for (var k3 = 0; k3 < nextOrder.length; k3++) nextItems[nextOrder[k3]].order = k3
++  for (var k4 = 0; k4 < nextOrder.length; k4++) nextItems[nextOrder[k4]].order = k4
+ 
+   return {
+     items: nextItems,
+@@ -340,7 +490,11 @@ function matchesQuery(entry, query, visible) {
+ 
+ function searchScore(items, entry, query) {
+   var needle = String(query || "").toLowerCase().trim()
+-  var label = entry.label.toLowerCase()
++  // A missing label used to throw here (entry.label.toLowerCase()), taking
++  // the whole search rebuild down with it; a missing order used to make the
++  // score NaN, which is not a number to sort by. Both are defended now: a
++  // row without a label simply matches nothing.
++  var label = String(entry.label || "").toLowerCase()
+   var nameText = nameSearchText(entry)
+   var descriptionText = String(entry.description || "").toLowerCase()
+   var score = 80
+@@ -354,12 +508,15 @@ function searchScore(items, entry, query) {
    else if (nameText.indexOf(needle) >= 0) score = 40
    else if (descriptionTextMatches(needle, descriptionText)) score = 60
  
@@ -3430,3 +3813,136 @@ index 53c49768..cd6ec8d9 100644
    // App rows sort after all menu items, so they lose the tiebreak below to an
    // equal match. Outrank those, but stay inside the tier so better ones win.
    if (entry.kind === "app") score -= 5
+ 
+-  return score * 1000 + depthFor(items, entry.id) * 25 + entry.order
++  return score * 1000 + depthFor(items, entry.id) * 25 + (entry.order || 0)
+ }
+ 
+ function displayRow(items, itemOrder, checkedResults, disabledResults, entry, detail, score, section) {
+@@ -440,19 +597,31 @@ function guardHelpers() {
+ // same way unquoted -- while a function would also catch `command -v reader`,
+ // `VAR=x reader`, and every other form, and answer those wrong. Anything but
+ // the plain substitution is left alone to run the real command.
++//
++// The readers are separate programs with nothing to share, so they all start
++// at once, before the helper functions are defined, each on a process
++// substitution of its own; the batch then reads each one's output in turn.
++// Run one after another they were a quarter of the batch. Reading to EOF and
++// dropping the trailing newlines is what `$(...)` does with the same output.
+ function guardPrelude(guards) {
+-  var prelude = guardHelpers()
++  var start = ""
++  var collect = ""
+ 
+   for (var i = 0; i < GUARD_READERS.length; i++) {
+     // The guards arrive already substituted, so what marks a reader as wanted
+     // is the slot standing in for it, not the call it replaced.
+     if (guards.indexOf(guardReaderSlot(i)) < 0) continue
+-    // `|| :` so a reader that exits nonzero cannot take the batch down with
+-    // it under a login shell that turned on errexit.
+-    prelude += "__omarchy_read_" + i + "=$(" + GUARD_READERS[i] + " 2>/dev/null) || :\n"
++    var value = "__omarchy_read_" + i
++    var fd = "__omarchy_read_fd_" + i
++    start += "exec {" + fd + "}< <(" + GUARD_READERS[i] + " 2>/dev/null)\n"
++    // `|| :` because read reports the EOF it stops at, and a login shell may
++    // have turned on errexit.
++    collect += "IFS= read -r -d '' " + value + " <&$" + fd + " || :\n"
++      + "exec {" + fd + "}<&-\n"
++      + value + "=${" + value + "%\"${" + value + "##*[!$'\\n']}\"}\n"
+   }
+ 
+-  return prelude
++  return start + guardHelpers() + collect
+ }
+ 
+ function guardReaderSlot(index) {
+@@ -466,28 +635,82 @@ function substituteGuardReaders(expression) {
+   return expression
+ }
+ 
++// The id comes from a JSONC key and is spliced into a shell script, so it
++// is QUOTED. It used to go into an unquoted `echo`, where a key holding a
++// space was split into words and a key holding a shell metacharacter broke
++// the line — bash then refused to parse the WHOLE batch, so every when:,
++// checked: and disabled: in the menu went unanswered and every guarded row
++// showed. printf also avoids the word splitting and globbing an unquoted
++// echo would do.
++function shellQuote(text) {
++  return "'" + String(text === undefined || text === null ? "" : text).replace(/'/g, "'\\''") + "'"
++}
++
+ function guardLine(id, tag, expression) {
+-  return "if { " + substituteGuardReaders(expression) + "; } >/dev/null 2>&1; then echo "
+-    + id + ":" + tag + ":1; else echo " + id + ":" + tag + ":0; fi\n"
++  var quoted = shellQuote(id)
++  return "if { " + substituteGuardReaders(expression) + "; } >/dev/null 2>&1; then "
++    + "printf '%s:%s:1\\n' " + quoted + " " + shellQuote(tag) + "; else "
++    + "printf '%s:%s:0\\n' " + quoted + " " + shellQuote(tag) + "; fi\n"
+ }
+ 
++// How many subshells share the guards. Most of the batch is a few dozen
++// separate programs (hardware probes, systemctl, the screen recorder's
++// status), each waiting on its own process start rather than on a core, so
++// running them side by side is where the time comes back. Eight took the
++// shipped menu's batch from ~400ms to ~160ms on a 32-thread desktop; more
++// stopped paying.
++var GUARD_GROUPS = 8
++
+ // One bash script for every `when:`, `checked:` and `disabled:` in the menu,
+ // reporting `<id>:<w|c|d>:<0|1>` per line. Speed is the whole point: the menu
+ // opens on the last evaluation's answers, so however long this takes is how
+ // long a row can contradict the state it describes.
++//
++// Guards are dealt round-robin into GUARD_GROUPS background subshells, each
++// inheriting the shadowed helpers and the readers' answers, and the batch
++// exits once all of them have. Lines arrive in any order, which the menu
++// never relied on: each names its row, and each is one short write to the
++// pipe, which the kernel never interleaves.
++//
++// A group that dies part way (a guard tripping a login shell's `set -u`, say)
++// has left its remaining rows unanswered, and the menu keeps the last full
++// set only when the batch fails. So each group is waited for by pid, and the
++// batch's status is nonzero if any of them was.
+ function guardScript(items) {
+-  var guards = ""
++  var lines = []
+   var ids = Object.keys(items || {})
+ 
+   for (var i = 0; i < ids.length; i++) {
+     var entry = items[ids[i]]
+     if (!entry) continue
+-    if (entry.when) guards += guardLine(ids[i], "w", entry.when)
+-    if (entry.checked) guards += guardLine(ids[i], "c", entry.checked)
+-    if (entry.disabled) guards += guardLine(ids[i], "d", entry.disabled)
++    if (entry.when) lines.push(guardLine(ids[i], "w", entry.when))
++    // A row that is UNCONDITIONALLY hidden — its `when` is the literal
++    // "false" — never shows, so its marker guards (checked / disabled)
++    // cannot change anything that is visible. They are skipped.
++    //
++    // This is not a micro-optimisation. A user extension hides a row by
++    // writing {"when": "false"} and nothing else, and the default menu
++    // gives many of those rows a `checked` that probes the system — the
++    // default-terminal probe alone costs most of a second where
++    // xdg-terminal-exec is slow, and the whole batch waits for its reader.
++    // Evaluating a marker for a row nobody can see is pure cost.
++    var hidden = entry.when && String(entry.when).trim() === "false"
++    if (entry.checked && !hidden) lines.push(guardLine(ids[i], "c", entry.checked))
++    if (entry.disabled && !hidden) lines.push(guardLine(ids[i], "d", entry.disabled))
++  }
++  if (lines.length === 0) return ""
++
++  var groups = []
++  for (var j = 0; j < lines.length; j++) {
++    var group = j % GUARD_GROUPS
++    groups[group] = (groups[group] || "") + lines[j]
+   }
+ 
+-  return guards ? guardPrelude(guards) + guards : ""
++  var script = guardPrelude(lines.join("")) + "__omarchy_groups=()\n"
++  for (var k = 0; k < groups.length; k++) script += "{\n" + groups[k] + "} &\n__omarchy_groups+=($!)\n"
++  return script + "__omarchy_failed=0\n"
++    + 'for __omarchy_group in "${__omarchy_groups[@]}"; do wait "$__omarchy_group" || __omarchy_failed=1; done\n'
++    + "((__omarchy_failed == 0))\n"
+ }
+ 
+ // An action that only asks this shell to summon one of its own plugins can be
