@@ -405,6 +405,8 @@ choose to press Enter on.
 
 ## Development
 
+[![check](https://github.com/IsseyShiitake/omarchy-launcher-v2/actions/workflows/check.yml/badge.svg)](https://github.com/IsseyShiitake/omarchy-launcher-v2/actions/workflows/check.yml)
+
 `make check` runs the installer scenarios end to end against sandboxed trees,
 verifies the patch reproduces the three files byte-for-byte, and — when the
 plugin checkout sits beside this one — that the shared files are identical. It

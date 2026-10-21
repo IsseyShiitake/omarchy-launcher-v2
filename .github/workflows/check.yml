@@ -1,0 +1,38 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: omarchy-launcher-v2
+
+      # The edition comparison needs the plugin beside this checkout.
+      - name: Sibling plugin checkout
+        run: git clone --depth 1 https://github.com/IsseyShiitake/omarchy-launcher-v2-plugin.git "$GITHUB_WORKSPACE/omarchy-launcher-v2-plugin"
+
+      # The installer and patch tests seed their sandboxes from this base.
+      - name: Omarchy checkout at the pinned base
+        run: |
+          git clone --quiet https://github.com/omacom/omarchy.git "$GITHUB_WORKSPACE/omarchy"
+          git -C "$GITHUB_WORKSPACE/omarchy" checkout --quiet 821ae589059ffdadc970315f866c94b55d268af7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: make check
+        working-directory: omarchy-launcher-v2
+        env:
+          STRICT: '1'
+          OMARCHY_PATH: ${{ github.workspace }}/omarchy
+        run: make check

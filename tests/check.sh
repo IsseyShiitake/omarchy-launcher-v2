@@ -6,10 +6,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 2
 
 PASS=0 FAIL=0 SKIP=0
+STRICT="${STRICT:-0}"   # 1 = a skip is a failure (CI)
 FAILED=()
 ok()   { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad()  { FAIL=$((FAIL + 1)); FAILED+=("$1"); printf '  FAIL  %s\n' "$1"; }
-skip() { SKIP=$((SKIP + 1)); printf '  skip  %s\n' "$1"; }
+skip() {
+  if [[ "$STRICT" == "1" ]]; then
+    bad "$1 (skipped, and STRICT=1)"
+  else
+    SKIP=$((SKIP + 1)); printf '  skip  %s\n' "$1"
+  fi
+}
 
 run() {
   local name="$1"; shift

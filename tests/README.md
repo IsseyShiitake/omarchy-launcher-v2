@@ -3,6 +3,10 @@
 `make check` (or `bash tests/check.sh`) verifies the pack the way a user meets
 it: the installer, the revert, and the patch.
 
+`STRICT=1 make check` turns every skip into a failure; CI runs that way, with
+both editions checked out side by side and Omarchy at the pinned base, so a
+missing prerequisite fails the job instead of quietly shrinking the suite.
+
 | Check | What it pins down | Needs |
 |---|---|---|
 | packaging contracts | the pack vendors `MenuModel.js`; `install.sh` installs it; no ranking patch; `uninstall.sh` restores `HEAD` and snapshots directories only; the install has a rollback trap | — |
