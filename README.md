@@ -402,6 +402,16 @@ Window rows read `hyprctl clients`.
 Nothing is sent anywhere; the only fallback row is an explicit web search you
 choose to press Enter on.
 
+
+## Development
+
+`make check` runs the installer scenarios end to end against sandboxed trees,
+verifies the patch reproduces the three files byte-for-byte, and — when the
+plugin checkout sits beside this one — that the shared files are identical. It
+needs a git checkout of Omarchy at the pinned base; without one those checks
+are reported as skips, with the reason. `make patch` regenerates the patch from
+`files/`. See `tests/README.md`.
+
 ## Credits & license
 
 Built on top of [Omarchy](https://omarchy.org) by DHH and contributors — the
