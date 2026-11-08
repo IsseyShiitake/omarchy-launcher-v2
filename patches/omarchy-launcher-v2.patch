@@ -1,5 +1,5 @@
 diff --git a/shell/Ui/OverlayWindow.qml b/shell/Ui/OverlayWindow.qml
-index 43a9c32c..be562837 100644
+index 43a9c32c2..be5628370 100644
 --- a/shell/Ui/OverlayWindow.qml
 +++ b/shell/Ui/OverlayWindow.qml
 @@ -17,6 +17,22 @@ PanelWindow {
@@ -63,7 +63,7 @@ index 43a9c32c..be562837 100644
    }
  }
 diff --git a/shell/plugins/menu/Menu.qml b/shell/plugins/menu/Menu.qml
-index 1625375e..613b7f16 100644
+index 1625375e6..cae35e96e 100644
 --- a/shell/plugins/menu/Menu.qml
 +++ b/shell/plugins/menu/Menu.qml
 @@ -9,19 +9,32 @@ import "MenuModel.js" as MenuModel
@@ -115,7 +115,7 @@ index 1625375e..613b7f16 100644
    property int requestSerial: 0
    property int applySerial: 0
    property var items: ({})
-@@ -75,6 +93,199 @@ Item {
+@@ -75,6 +93,200 @@ Item {
    property var providerQueue: []
    property int providerRevision: 0
  
@@ -164,6 +164,7 @@ index 1625375e..613b7f16 100644
 +  property var frecency: ({})
 +  property bool frecencyLoaded: false
 +  readonly property string frecencyPath: Quickshell.env("HOME") + "/.local/state/omarchy/launcher-frecency.json"
++  readonly property string frecencyDir: root.frecencyPath.slice(0, root.frecencyPath.lastIndexOf("/"))
 +
 +  // Live date/time answer rows: true while a date answer is on screen, with
 +  // the format it was rendered in — the tick timer below re-renders it each
@@ -315,7 +316,7 @@ index 1625375e..613b7f16 100644
    // Shared application engine (entries, hidden filters, icons, launch,
    // removal), owned by the shell and also used by the standalone launcher.
    readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
-@@ -106,10 +317,17 @@ Item {
+@@ -106,10 +318,17 @@ Item {
    property int rowPeek: Math.round(baseRowHeight * 0.55)
    property int rowSpacing: Style.spacing.xs
    property int dividerHeight: Style.space(17)
@@ -335,7 +336,7 @@ index 1625375e..613b7f16 100644
    property int cardHeight: root.dmenuActive
      ? Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
      : Math.min(contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight, panel.height - Style.gapsOut * 2)
-@@ -126,7 +344,10 @@ Item {
+@@ -126,7 +345,10 @@ Item {
      root.selectionFile = ""
      root.doneFile = ""
  
@@ -347,7 +348,7 @@ index 1625375e..613b7f16 100644
        resultProc.command = ["bash", "-c", ": > " + Util.shellQuote(activeDoneFile)]
      } else {
        resultProc.command = ["bash", "-c", "printf '%s\\n' " + Util.shellQuote(selection) + " > " + Util.shellQuote(activeSelectionFile) + "; : > " + Util.shellQuote(activeDoneFile)]
-@@ -181,7 +402,7 @@ Item {
+@@ -181,7 +403,7 @@ Item {
      return totals[full - 1] + root.rowSpacing + peek
    }
  
@@ -356,7 +357,7 @@ index 1625375e..613b7f16 100644
      if (displayModel.count === 0) return root.baseRowHeight
  
      var totals = []
-@@ -191,7 +412,7 @@ Item {
+@@ -191,7 +413,7 @@ Item {
      for (var i = 0; i < displayModel.count; i++) {
        var row = displayModel.get(i)
        if (i > 0) total += root.rowSpacing
@@ -365,7 +366,7 @@ index 1625375e..613b7f16 100644
        total += root.rowHeightForDetail(row.detail)
        previousSection = row.section
        totals.push(total)
-@@ -227,18 +448,6 @@ Item {
+@@ -227,18 +449,6 @@ Item {
    // the on-disk authoring format stays untouched.
    // ------------------------------------------------------------------
  
@@ -384,7 +385,7 @@ index 1625375e..613b7f16 100644
    function parseMenuJsonc(raw) {
      return MenuModel.parseMenuJsonc(raw)
    }
-@@ -258,7 +467,7 @@ Item {
+@@ -258,7 +468,7 @@ Item {
      if (root.opened) {
        root.rebuildDisplay()
        if (!root.dmenuActive) {
@@ -393,7 +394,7 @@ index 1625375e..613b7f16 100644
          else root.loadProviderForMenu(root.activeMenu)
        }
      }
-@@ -349,6 +558,7 @@ Item {
+@@ -349,6 +559,7 @@ Item {
      providerProc.collected = ""
      providerProc.command = ["bash", "-lc", spec.script]
      providerProc.running = true
@@ -401,7 +402,7 @@ index 1625375e..613b7f16 100644
    }
  
    function mergeProviderRows(rows, menuId, providerKey) {
-@@ -418,6 +628,1141 @@ Item {
+@@ -418,6 +629,1154 @@ Item {
      if (spec && spec.volatile) root.providersLoaded[id] = false
    }
  
@@ -1437,8 +1438,19 @@ index 1625375e..613b7f16 100644
 +  }
 +
 +  // No-op until frecencyLoaded — a pre-load activation would otherwise write
-+  // {} over history. setText creates the file AND parent dirs; no shell, no
-+  // quoting.
++  // {} over history. The history is private (opened paths, counts,
++  // timestamps), and setText writes atomically: temp file + rename, so every
++  // save recreates the file with umask permissions. frecencyGuard therefore
++  // re-asserts owner-only modes around each write — 700 on the state
++  // directory BEFORE any data lands (the load-bearing barrier: no traversal
++  // by other users, whatever the file's own mode), 600 on the file AFTER the
++  // rename completes (frecencyFile.onSaved). The same re-assertion is what
++  // repairs a file written before the guard existed. Steps: 0 mkdir, 1 chmod
++  // dir, 2 write (completes on saved/saveFailed), then the file chmod. A
++  // record landing mid-chain stomps the step counter and simply re-runs the
++  // chain against the freshest map — every step is idempotent.
++  property int frecencyGuardStep: -1
++
 +  function recordFrecency(key) {
 +    if (!root.frecencyLoaded || !key) return
 +    var next = ({})
@@ -1451,7 +1463,9 @@ index 1625375e..613b7f16 100644
 +      while (keys.length > 300) delete next[keys.shift()]
 +    }
 +    root.frecency = next
-+    frecencyFile.setText(JSON.stringify(next))
++    frecencyGuardStep = 0
++    frecencyGuard.command = ["/usr/bin/mkdir", "-p", "-m", "700", root.frecencyDir]
++    frecencyGuard.running = true
 +  }
 +
 +  // ---- Open-windows tier ---------------------
@@ -1543,7 +1557,7 @@ index 1625375e..613b7f16 100644
    function loadProviderForMenu(id) {
      var entry = root.item(id)
      if (!entry || !entry.provider || root.providersLoaded[id]) return
-@@ -519,7 +1864,13 @@ Item {
+@@ -519,7 +1878,13 @@ Item {
    }
  
    function displayRow(entry, detail, score, section) {
@@ -1558,7 +1572,7 @@ index 1625375e..613b7f16 100644
    }
  
    function rowSelectable(index) {
-@@ -555,7 +1906,6 @@ Item {
+@@ -555,7 +1920,6 @@ Item {
  
    function rebuildDmenuDisplay() {
      displayModel.clear()
@@ -1566,7 +1580,7 @@ index 1625375e..613b7f16 100644
  
      if (root.mode === "input") {
        layoutSerial += 1
-@@ -590,7 +1940,9 @@ Item {
+@@ -590,7 +1954,9 @@ Item {
          action: "",
          provider: "",
          score: i,
@@ -1577,7 +1591,7 @@ index 1625375e..613b7f16 100644
        })
      }
  
-@@ -606,11 +1958,25 @@ Item {
+@@ -606,11 +1972,25 @@ Item {
    }
  
    function rebuildDisplay() {
@@ -1603,7 +1617,7 @@ index 1625375e..613b7f16 100644
      displayModel.clear()
  
      if (!root.rowsLoaded) return
-@@ -619,36 +1985,387 @@ Item {
+@@ -619,36 +1999,387 @@ Item {
      root.activeMenu = active
      var rows = []
      var query = root.filterText.trim()
@@ -2016,7 +2030,7 @@ index 1625375e..613b7f16 100644
      } else {
        for (var j = 0; j < root.itemOrder.length; j++) {
          var child = root.item(root.itemOrder[j])
-@@ -677,8 +2394,19 @@ Item {
+@@ -677,8 +2408,19 @@ Item {
      for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
      layoutSerial += 1
  
@@ -2036,7 +2050,7 @@ index 1625375e..613b7f16 100644
      Qt.callLater(function() {
        if (displayModel.count > 0) root.revealCursor()
      })
-@@ -706,15 +2434,216 @@ Item {
+@@ -706,15 +2448,216 @@ Item {
      }
    }
  
@@ -2259,7 +2273,7 @@ index 1625375e..613b7f16 100644
      selectedIndex = target
      revealCursor()
    }
-@@ -723,9 +2652,11 @@ Item {
+@@ -723,9 +2666,11 @@ Item {
      panel.freezeCardTop()
      root.filterText = nextFilter
      root.selectedIndex = 0
@@ -2272,7 +2286,7 @@ index 1625375e..613b7f16 100644
      root.rebuildDisplay()
    }
  
-@@ -734,8 +2665,11 @@ Item {
+@@ -734,8 +2679,11 @@ Item {
      if (!root.item(id)) id = "root"
      if (pushHistory && id !== root.activeMenu) root.navStack = root.navStack.concat([root.activeMenu])
      root.activeMenu = id
@@ -2284,7 +2298,7 @@ index 1625375e..613b7f16 100644
      root.cursorActive = true
      if (fromPointer) pointerGate.allowInitialSample()
      else root.disarmPointer()
-@@ -745,6 +2679,8 @@ Item {
+@@ -745,6 +2693,8 @@ Item {
    }
  
    function goBack() {
@@ -2293,7 +2307,7 @@ index 1625375e..613b7f16 100644
      if (root.activeMenu === "root") return false
  
      if (root.navStack.length > 0) {
-@@ -775,6 +2711,10 @@ Item {
+@@ -775,6 +2725,10 @@ Item {
      if (!root.rowSelectable(index)) return
  
      var row = displayModel.get(index)
@@ -2304,7 +2318,7 @@ index 1625375e..613b7f16 100644
      if (row.kind === "menu" || row.kind === "link") {
        root.setActiveMenu(row.target || row.itemId, true, fromPointer)
      } else if (row.kind === "app") {
-@@ -783,7 +2723,62 @@ Item {
+@@ -783,7 +2737,62 @@ Item {
        applySerial = requestSerial
        opened = false
        filterText = ""
@@ -2367,7 +2381,7 @@ index 1625375e..613b7f16 100644
      } else {
        root.applySelected(row.itemId, row.action)
      }
-@@ -819,6 +2814,7 @@ Item {
+@@ -819,6 +2828,7 @@ Item {
      applySerial = requestSerial
      opened = false
      filterText = ""
@@ -2375,7 +2389,7 @@ index 1625375e..613b7f16 100644
      root.finishRequest(value)
    }
  
-@@ -828,6 +2824,7 @@ Item {
+@@ -828,6 +2838,7 @@ Item {
      applySerial = requestSerial
      opened = false
      filterText = ""
@@ -2383,7 +2397,7 @@ index 1625375e..613b7f16 100644
      root.runAction(action)
    }
  
-@@ -835,6 +2832,8 @@ Item {
+@@ -835,6 +2846,8 @@ Item {
      if (root.dmenuActive) root.finishRequest(null)
      opened = false
      filterText = ""
@@ -2392,7 +2406,7 @@ index 1625375e..613b7f16 100644
    }
  
    function openExistingMenu(initialMenu) {
-@@ -845,11 +2844,25 @@ Item {
+@@ -845,11 +2858,25 @@ Item {
      doneFile = ""
      activeMenu = root.item(initialMenu) ? initialMenu : "root"
      navStack = []
@@ -2418,7 +2432,7 @@ index 1625375e..613b7f16 100644
      opened = true
      rebuildDisplay()
      invalidateVolatileProvider(activeMenu)
-@@ -869,12 +2882,19 @@ Item {
+@@ -869,12 +2896,19 @@ Item {
      selectionFile = String(payload.selectionFile || "")
      doneFile = String(payload.doneFile || "")
      requestActive = !!doneFile
@@ -2440,7 +2454,7 @@ index 1625375e..613b7f16 100644
      cursorActive = mode !== "input"
      root.disarmPointer()
      opened = true
-@@ -882,6 +2902,27 @@ Item {
+@@ -882,6 +2916,27 @@ Item {
  
      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
    }
@@ -2468,7 +2482,7 @@ index 1625375e..613b7f16 100644
    ListModel { id: displayModel }
  
    // ----------------------------------------------------------- route surface
-@@ -908,7 +2949,6 @@ Item {
+@@ -908,7 +2963,6 @@ Item {
      }
      // If it's a link (a redirect to another menu), follow the link.
      if (entry && entry.kind === "link" && entry.target) id = entry.target
@@ -2476,7 +2490,7 @@ index 1625375e..613b7f16 100644
      root.openExistingMenu(id)
      return "ok"
    }
-@@ -917,13 +2957,353 @@ Item {
+@@ -917,13 +2971,353 @@ Item {
      pointerGate.reset()
    }
  
@@ -2830,7 +2844,7 @@ index 1625375e..613b7f16 100644
    Process {
      id: providerProc
      property string menuId: ""
-@@ -934,14 +3314,111 @@ Item {
+@@ -934,14 +3328,111 @@ Item {
        onRead: function(data) { providerProc.collected += data + "\n" }
      }
      onExited: {
@@ -2943,7 +2957,7 @@ index 1625375e..613b7f16 100644
    Process {
      id: resultProc
      onExited: {
-@@ -950,6 +3427,289 @@ Item {
+@@ -950,6 +3441,289 @@ Item {
      }
    }
  
@@ -3233,7 +3247,7 @@ index 1625375e..613b7f16 100644
    PointerMoveGate {
      id: pointerGate
      referenceItem: card
-@@ -971,6 +3731,7 @@ Item {
+@@ -971,6 +3745,7 @@ Item {
      watchChanges: true
      printErrors: false
      onLoaded: { root.defaultMenuItems = root.parseMenuJsonc(text()); root.rebuildItemsFromSources() }
@@ -3241,7 +3255,7 @@ index 1625375e..613b7f16 100644
      onFileChanged: reload()
    }
  
-@@ -984,6 +3745,73 @@ Item {
+@@ -984,6 +3759,110 @@ Item {
      onFileChanged: reload()
    }
  
@@ -3300,9 +3314,10 @@ index 1625375e..613b7f16 100644
 +  }
 +
 +  // Frecency state: read once at startup (a missing file opens the gate via
-+  // onLoadFailed), written atomically by recordFrecency. Single-writer by
-+  // assumption — the file belongs to the one live shell instance; two
-+  // quickshell instances would last-writer-wins over each other.
++  // onLoadFailed), written atomically by recordFrecency through the guard
++  // chain. Single-writer by assumption — the file belongs to the one live
++  // shell instance; two quickshell instances would last-writer-wins over
++  // each other.
 +  FileView {
 +    id: frecencyFile
 +    path: root.frecencyPath
@@ -3310,12 +3325,48 @@ index 1625375e..613b7f16 100644
 +    atomicWrites: true
 +    onLoaded: root.adoptFrecency(text())
 +    onLoadFailed: root.adoptFrecency("")
++    onSaved: {
++      // The rename landed: new bytes in place, umask permissions on the
++      // file. Clamp it back to owner-only now. argv list, no shell — the
++      // path comes from $HOME and stays quote-free, same rule as the tiers.
++      if (root.frecencyGuardStep === 2) {
++        root.frecencyGuardStep = -1
++        frecencyGuard.command = ["/usr/bin/chmod", "600", root.frecencyPath]
++        frecencyGuard.running = true
++      }
++    }
++    onSaveFailed: {
++      // Nothing was written; the file keeps whatever mode it already had.
++      if (root.frecencyGuardStep === 2) root.frecencyGuardStep = -1
++    }
++  }
++
++  // The frecency permission guard's executor. One Process, three commands in
++  // sequence; see recordFrecency for the step table. A failing step (chmod on
++  // a file that does not exist yet) exits nonzero and the chain moves on —
++  // the directory steps are what protect a first-ever save.
++  Process {
++    id: frecencyGuard
++
++    onExited: {
++      if (root.frecencyGuardStep === 0) {
++        root.frecencyGuardStep = 1
++        command = ["/usr/bin/chmod", "700", root.frecencyDir]
++        running = true
++      } else if (root.frecencyGuardStep === 1) {
++        root.frecencyGuardStep = 2
++        frecencyFile.setText(JSON.stringify(root.frecency))
++        // Completes on frecencyFile.onSaved / onSaveFailed, not here.
++      } else {
++        root.frecencyGuardStep = -1
++      }
++    }
 +  }
 +
    // ---------------------------------------------------------------- guards
    //
    // `when:` (visibility) and `checked:` (✓ marker) are bash expressions the
-@@ -1019,6 +3847,7 @@ Item {
+@@ -1019,6 +3898,7 @@ Item {
      guardProc.collected = ""
      guardProc.command = ["bash", "-lc", script]
      guardProc.running = true
@@ -3323,7 +3374,7 @@ index 1625375e..613b7f16 100644
    }
  
    Process {
-@@ -1028,6 +3857,7 @@ Item {
+@@ -1028,6 +3908,7 @@ Item {
        onRead: function(data) { guardProc.collected += data + "\n" }
      }
      onExited: function(exitCode, exitStatus) {
@@ -3331,7 +3382,7 @@ index 1625375e..613b7f16 100644
        // A batch that was killed rather than finished has only told us about
        // the rows it reached, and a row whose `when:` went unanswered shows.
        // Keep the last complete set rather than let a half-read one through.
-@@ -1065,6 +3895,18 @@ Item {
+@@ -1065,6 +3946,18 @@ Item {
        if (root.guardsPending) Qt.callLater(function() { root.evaluateGuards() })
      }
    }
@@ -3350,7 +3401,7 @@ index 1625375e..613b7f16 100644
    OverlayWindow {
      id: panel
      shown: root.opened && root.rowsLoaded
-@@ -1075,7 +3917,8 @@ Item {
+@@ -1075,7 +3968,8 @@ Item {
      // then on the card grows and shrinks downward instead of re-centering
      // on every resize, which made the menu jump around. The rows height is
      // frozen at the same moment, so the starting menu also caps how tall the
@@ -3360,7 +3411,7 @@ index 1625375e..613b7f16 100644
      property int cardTop: -1
      property int maxRowsHeight: -1
      readonly property int centeredTop: Math.max(Style.gapsOut, Math.round((height - root.cardHeight) / 2))
-@@ -1087,11 +3930,19 @@ Item {
+@@ -1087,11 +3981,19 @@ Item {
        }
      }
      // The surface stays mapped between opens, so closing is shown going false.
@@ -3382,7 +3433,7 @@ index 1625375e..613b7f16 100644
      }
  
      MouseArea {
-@@ -1101,6 +3952,10 @@ Item {
+@@ -1101,6 +4003,10 @@ Item {
  
      BorderSurface {
        id: card
@@ -3393,7 +3444,7 @@ index 1625375e..613b7f16 100644
        width: root.cardWidth
        height: Math.min(root.cardHeight, panel.height - Style.gapsOut - panel.effectiveCardTop)
        radius: root.cornerRadius
-@@ -1112,6 +3967,44 @@ Item {
+@@ -1112,6 +4018,44 @@ Item {
  
        MouseArea { anchors.fill: parent; onClicked: {} }
  
@@ -3438,7 +3489,7 @@ index 1625375e..613b7f16 100644
        Item {
          id: keyCatcher
          anchors.fill: parent
-@@ -1120,47 +4013,13 @@ Item {
+@@ -1120,47 +4064,13 @@ Item {
  
          Keys.priority: Keys.BeforeItem
          Keys.onPressed: function(event) {
@@ -3489,7 +3540,7 @@ index 1625375e..613b7f16 100644
          }
  
          ConfirmDialog {
-@@ -1202,7 +4061,9 @@ Item {
+@@ -1202,7 +4112,9 @@ Item {
              anchors.left: parent.left
              anchors.right: parent.right
              anchors.verticalCenter: parent.verticalCenter
@@ -3500,7 +3551,7 @@ index 1625375e..613b7f16 100644
              color: root.foreground
              opacity: root.filterText ? 1 : 0.58
              font.family: root.fontFamily
-@@ -1230,8 +4091,8 @@ Item {
+@@ -1230,8 +4142,8 @@ Item {
                required property string section
  
                width: ListView.view.width
@@ -3511,7 +3562,7 @@ index 1625375e..613b7f16 100644
  
                Rectangle {
                  anchors.left: parent.left
-@@ -1260,10 +4121,13 @@ Item {
+@@ -1260,10 +4172,13 @@ Item {
                required property string action
                required property int childCount
                required property bool disabled
@@ -3526,7 +3577,7 @@ index 1625375e..613b7f16 100644
  
                width: ListView.view.width
                height: root.rowHeightForDetail(row.detail)
-@@ -1301,6 +4165,22 @@ Item {
+@@ -1301,6 +4216,22 @@ Item {
                  y: contentColumn.y + labelText.y + (labelText.height - height) / 2
                }
  
@@ -3549,7 +3600,7 @@ index 1625375e..613b7f16 100644
                Image {
                  id: appIconImage
                  visible: row.isApp
-@@ -1387,6 +4267,7 @@ Item {
+@@ -1387,6 +4318,7 @@ Item {
                  id: mouseArea
                  anchors.fill: parent
                  hoverEnabled: true
@@ -3557,7 +3608,7 @@ index 1625375e..613b7f16 100644
                  cursorShape: row.disabled ? Qt.ArrowCursor : Qt.PointingHandCursor
                  onEntered: root.selectFromPointer(row.index, row, {
                    x: mouseArea.mouseX,
-@@ -1395,7 +4276,12 @@ Item {
+@@ -1395,7 +4327,12 @@ Item {
                  onPositionChanged: function(mouse) {
                    root.selectFromPointer(row.index, row, mouse)
                  }
@@ -3572,7 +3623,7 @@ index 1625375e..613b7f16 100644
                    root.cursorActive = true
                    root.selectedIndex = row.index
 diff --git a/shell/plugins/menu/MenuModel.js b/shell/plugins/menu/MenuModel.js
-index 53c49768..961ef5ec 100644
+index 53c49768e..961ef5ece 100644
 --- a/shell/plugins/menu/MenuModel.js
 +++ b/shell/plugins/menu/MenuModel.js
 @@ -1,7 +1,108 @@

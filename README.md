@@ -393,6 +393,13 @@ with these; if the launcher misbehaves after an update, re-run
 
 ## Privacy notes
 
+The frecency history is written with **owner-only permissions**: the state
+directory is held at `0700` before any data lands and the file is clamped to
+`0600` after every save (a save is an atomic rename, which would otherwise
+recreate the file with default umask permissions each time — the launcher
+re-asserts the modes on every write, which also repairs a file written by an
+older version).
+
 File search covers `$HOME` only, using fd's defaults (hidden and gitignored
 paths skipped). Symlinks are neither followed nor matched while searching —
 fd's file type does not include them — but they *are* listed while browsing a

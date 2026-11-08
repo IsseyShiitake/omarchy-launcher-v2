@@ -138,6 +138,7 @@ Item {
   property var frecency: ({})
   property bool frecencyLoaded: false
   readonly property string frecencyPath: Quickshell.env("HOME") + "/.local/state/omarchy/launcher-frecency.json"
+  readonly property string frecencyDir: root.frecencyPath.slice(0, root.frecencyPath.lastIndexOf("/"))
 
   // Live date/time answer rows: true while a date answer is on screen, with
   // the format it was rendered in — the tick timer below re-renders it each
@@ -1660,8 +1661,19 @@ Item {
   }
 
   // No-op until frecencyLoaded — a pre-load activation would otherwise write
-  // {} over history. setText creates the file AND parent dirs; no shell, no
-  // quoting.
+  // {} over history. The history is private (opened paths, counts,
+  // timestamps), and setText writes atomically: temp file + rename, so every
+  // save recreates the file with umask permissions. frecencyGuard therefore
+  // re-asserts owner-only modes around each write — 700 on the state
+  // directory BEFORE any data lands (the load-bearing barrier: no traversal
+  // by other users, whatever the file's own mode), 600 on the file AFTER the
+  // rename completes (frecencyFile.onSaved). The same re-assertion is what
+  // repairs a file written before the guard existed. Steps: 0 mkdir, 1 chmod
+  // dir, 2 write (completes on saved/saveFailed), then the file chmod. A
+  // record landing mid-chain stomps the step counter and simply re-runs the
+  // chain against the freshest map — every step is idempotent.
+  property int frecencyGuardStep: -1
+
   function recordFrecency(key) {
     if (!root.frecencyLoaded || !key) return
     var next = ({})
@@ -1674,7 +1686,9 @@ Item {
       while (keys.length > 300) delete next[keys.shift()]
     }
     root.frecency = next
-    frecencyFile.setText(JSON.stringify(next))
+    frecencyGuardStep = 0
+    frecencyGuard.command = ["/usr/bin/mkdir", "-p", "-m", "700", root.frecencyDir]
+    frecencyGuard.running = true
   }
 
   // ---- Open-windows tier ---------------------
@@ -3800,9 +3814,10 @@ Item {
   }
 
   // Frecency state: read once at startup (a missing file opens the gate via
-  // onLoadFailed), written atomically by recordFrecency. Single-writer by
-  // assumption — the file belongs to the one live shell instance; two
-  // quickshell instances would last-writer-wins over each other.
+  // onLoadFailed), written atomically by recordFrecency through the guard
+  // chain. Single-writer by assumption — the file belongs to the one live
+  // shell instance; two quickshell instances would last-writer-wins over
+  // each other.
   FileView {
     id: frecencyFile
     path: root.frecencyPath
@@ -3810,6 +3825,42 @@ Item {
     atomicWrites: true
     onLoaded: root.adoptFrecency(text())
     onLoadFailed: root.adoptFrecency("")
+    onSaved: {
+      // The rename landed: new bytes in place, umask permissions on the
+      // file. Clamp it back to owner-only now. argv list, no shell — the
+      // path comes from $HOME and stays quote-free, same rule as the tiers.
+      if (root.frecencyGuardStep === 2) {
+        root.frecencyGuardStep = -1
+        frecencyGuard.command = ["/usr/bin/chmod", "600", root.frecencyPath]
+        frecencyGuard.running = true
+      }
+    }
+    onSaveFailed: {
+      // Nothing was written; the file keeps whatever mode it already had.
+      if (root.frecencyGuardStep === 2) root.frecencyGuardStep = -1
+    }
+  }
+
+  // The frecency permission guard's executor. One Process, three commands in
+  // sequence; see recordFrecency for the step table. A failing step (chmod on
+  // a file that does not exist yet) exits nonzero and the chain moves on —
+  // the directory steps are what protect a first-ever save.
+  Process {
+    id: frecencyGuard
+
+    onExited: {
+      if (root.frecencyGuardStep === 0) {
+        root.frecencyGuardStep = 1
+        command = ["/usr/bin/chmod", "700", root.frecencyDir]
+        running = true
+      } else if (root.frecencyGuardStep === 1) {
+        root.frecencyGuardStep = 2
+        frecencyFile.setText(JSON.stringify(root.frecency))
+        // Completes on frecencyFile.onSaved / onSaveFailed, not here.
+      } else {
+        root.frecencyGuardStep = -1
+      }
+    }
   }
 
   // ---------------------------------------------------------------- guards
